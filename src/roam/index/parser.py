@@ -10,7 +10,21 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from tree_sitter_language_pack import get_parser
+from tree_sitter_language_pack import get_parser as _lp_get_parser
+
+
+def get_parser(grammar: str):
+    """Get a tree-sitter parser, preferring mulle-objc for objc."""
+    if grammar == "objc":
+        try:
+            import tree_sitter_objc as _ts_mulle_objc
+            from tree_sitter import Language, Parser
+            lang = Language(_ts_mulle_objc.language())
+            p = Parser(lang)
+            return p
+        except Exception:
+            pass
+    return _lp_get_parser(grammar)
 
 # Map file extensions to tree-sitter language names
 EXTENSION_MAP = {
