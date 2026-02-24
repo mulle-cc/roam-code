@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 # Map file extension -> (tree-sitter language name, extractor language key)
 _EXTENSION_MAP: dict[str, str] = {
+    # NOTE: .h is configurable via `roam config h-language <c|cpp|objc>` (default: c)
     ".vue": "vue",
     ".svelte": "svelte",
     ".py": "python",
@@ -39,6 +40,9 @@ _EXTENSION_MAP: dict[str, str] = {
     ".rb": "ruby",
     ".php": "php",
     ".cs": "c_sharp",
+    ".m": "objc",
+    ".mm": "objc",
+    ".aam": "objc",
     ".kt": "kotlin",
     ".kts": "kotlin",
     ".swift": "swift",
@@ -74,7 +78,7 @@ _EXTENSION_MAP: dict[str, str] = {
 _DEDICATED_EXTRACTORS = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp", "php",
-    "c_sharp", "ruby",
+    "c_sharp", "ruby", "objc",
 })
 
 # All supported tree-sitter language names (includes aliased languages)
@@ -82,6 +86,7 @@ _SUPPORTED_LANGUAGES = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp",
     "ruby", "php", "c_sharp", "kotlin", "swift", "scala",
+    "objc",
     "vue", "svelte",
     # Aliased languages (parsed via grammar aliases)
     "apex", "sfxml", "aura", "visualforce",
@@ -99,13 +104,30 @@ def get_language_for_file(path: str) -> str | None:
     """Determine the language for a file based on its extension.
 
     Returns the language name string, or None if unsupported.
+    .h files default to 'c' but can be overridden via `roam config h-language <c|cpp|objc>`.
     """
     # Salesforce metadata files: *.cls-meta.xml, *.object-meta.xml, etc.
     if path.endswith("-meta.xml"):
         return "sfxml"
     _, ext = os.path.splitext(path)
     ext = ext.lower()
+    if ext == ".h":
+        return _get_h_language()
     return _EXTENSION_MAP.get(ext)
+
+
+def _get_h_language() -> str:
+    """Return the configured language for .h files (default: 'c')."""
+    try:
+        from roam.db.connection import find_project_root, _load_project_config
+        root = find_project_root()
+        cfg = _load_project_config(root)
+        lang = cfg.get("h-language", "c")
+        if lang in ("c", "cpp", "objc"):
+            return lang
+    except Exception:
+        pass
+    return "c"
 
 
 def get_ts_language(language: str):
@@ -171,6 +193,9 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "ruby":
         from .ruby_lang import RubyExtractor
         return RubyExtractor()
+    elif language == "objc":
+        from .objc_lang import ObjCExtractor
+        return ObjCExtractor()
     # Salesforce extractors
     elif language == "apex":
         from .apex_lang import ApexExtractor
