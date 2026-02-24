@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*95 commands · 26 languages · architecture OS · 100% local*
+*95 commands · 27 languages · architecture OS · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -26,7 +26,7 @@ Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Ro
 Codebase ──> [Index] ──> Semantic Graph ──> 94 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
-           26 languages   + edges            govern
+           27 languages   + edges            govern
            git history    + metrics          refactor
            runtime traces + architecture     orchestrate
 ```
@@ -1045,8 +1045,11 @@ Cross-language edges mean `roam impact AccountService` shows blast radius across
 </details>
 
 | Ruby | `.rb` | classes, modules, methods, singleton methods, constants | require, require_relative, include/extend, calls, ClassName.new | class inheritance |
+| Objective-C | `.m` `.mm` `.aam` `.h`* | classes, categories, protocols, methods, properties, instance variables, C functions/structs/enums | `#import`, `@import`, message expressions `[obj method]`, `[Class method]` | `@interface` superclass, protocol conformance |
 | JSONC | `.jsonc` | via JSON grammar | -- | -- |
 | MDX | `.mdx` | via Markdown grammar | -- | -- |
+
+*`.h` files default to C. Set `roam config --h-language objc` (or `cpp`) to parse them as Objective-C (or C++) instead. Since both are strict supersets of C, this is safe for any `.h` file.
 
 ### Tier 2 -- Generic extraction
 
@@ -1104,7 +1107,7 @@ Codebase
     |
 [1] Discovery ──── git ls-files (respects .gitignore + .roamignore)
     |
-[2] Parse ──────── tree-sitter AST per file (26 languages)
+[2] Parse ──────── tree-sitter AST per file (27 languages)
     |
 [3] Extract ────── symbols + references (calls, imports, inheritance)
     |

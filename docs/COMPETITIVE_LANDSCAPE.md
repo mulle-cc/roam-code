@@ -4,7 +4,7 @@
 
 This document maps the competitive landscape for tools that provide codebase comprehension, static analysis, and structural code intelligence -- particularly those aimed at AI coding agents.
 
-roam-code occupies a unique niche: a **pre-indexing CLI** that builds a semantic graph (symbols, call graphs, dependencies, architecture, git history) into a local SQLite DB, then exposes 94 commands optimized for AI agent consumption. It supports 26 languages, runs 100% locally with zero API keys, and produces token-efficient output designed for LLM context windows.
+roam-code occupies a unique niche: a **pre-indexing CLI** that builds a semantic graph (symbols, call graphs, dependencies, architecture, git history) into a local SQLite DB, then exposes 94 commands optimized for AI agent consumption. It supports 27 languages, runs 100% locally with zero API keys, and produces token-efficient output designed for LLM context windows.
 
 ---
 
