@@ -34,6 +34,8 @@ EXTENSION_MAP = {
     ".cs": "c_sharp",
     ".rb": "ruby",
     ".php": "php",
+    ".m": "objc",
+    ".mm": "objc",
     ".swift": "swift",
     ".kt": "kotlin",
     ".kts": "kotlin",
