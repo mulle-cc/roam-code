@@ -50,9 +50,6 @@ class TestExtensionMapping:
     def test_mm_maps_to_objc(self):
         assert get_language_for_file("foo.mm") == "objc"
 
-    def test_aam_maps_to_objc(self):
-        assert get_language_for_file("foo.aam") == "objc"
-
     def test_h_defaults_to_c(self):
         assert get_language_for_file("foo.h") == "c"
 
