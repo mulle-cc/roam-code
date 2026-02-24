@@ -42,6 +42,7 @@ _EXTENSION_MAP: dict[str, str] = {
     ".cs": "c_sharp",
     ".m": "objc",
     ".mm": "objc",
+    ".aam": "objc",
     ".kt": "kotlin",
     ".kts": "kotlin",
     ".swift": "swift",

@@ -36,6 +36,7 @@ EXTENSION_MAP = {
     ".php": "php",
     ".m": "objc",
     ".mm": "objc",
+    ".aam": "objc",
     ".swift": "swift",
     ".kt": "kotlin",
     ".kts": "kotlin",
