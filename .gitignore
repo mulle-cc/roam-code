@@ -40,3 +40,8 @@ bench-repos/
 venv/
 .venv/
 env/
+
+# Local dev files
+.kiro/
+AGENTS.md
+MATCHPLAN.md
