@@ -32,6 +32,7 @@ dependencies = [
     "click>=8.0",
     "tree-sitter>=0.23",
     "tree-sitter-language-pack>=0.6",
+    "tree-sitter-mulle-objc>=0.0.3",
     "networkx>=3.0",
 ]
 
