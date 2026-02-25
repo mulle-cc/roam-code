@@ -28,15 +28,25 @@ def get_parser(grammar: str):
         grammar = "objc"
     return _lp_get_parser(grammar)
 
-# Map file extensions to tree-sitter language names
+# Map file extensions to tree-sitter language names.
+# This is the single canonical source of truth for extension → language mapping.
+# registry.py's _EXTENSION_MAP is derived from this dict (see registry.py).
 EXTENSION_MAP = {
     ".vue": "vue",
     ".svelte": "svelte",
+    # Python
     ".py": "python",
+    ".pyi": "python",
+    # JavaScript / ESM variants
     ".js": "javascript",
     ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    # TypeScript variants
     ".ts": "typescript",
     ".tsx": "tsx",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".rs": "rust",
     ".go": "go",
     ".java": "java",
@@ -46,6 +56,7 @@ EXTENSION_MAP = {
     ".cc": "cpp",
     ".cxx": "cpp",
     ".hpp": "cpp",
+    ".hxx": "cpp",
     ".hh": "cpp",
     ".cs": "c_sharp",
     ".rb": "ruby",
@@ -56,7 +67,10 @@ EXTENSION_MAP = {
     ".swift": "swift",
     ".kt": "kotlin",
     ".kts": "kotlin",
+    # Scala
     ".scala": "scala",
+    ".sc": "scala",
+    # Tier-2 / tree-sitter-only languages (no dedicated roam extractor)
     ".lua": "lua",
     ".zig": "zig",
     ".el": "elisp",
@@ -85,7 +99,9 @@ EXTENSION_MAP = {
     ".md": "markdown",
     ".mdx": "mdx",
     ".sql": "sql",
+    # HCL / Terraform (regex-only)
     ".tf": "hcl",
+    ".tfvars": "hcl",
     ".hcl": "hcl",
     # Salesforce
     ".cls": "apex",
@@ -110,7 +126,7 @@ GRAMMAR_ALIASES = {
     "c_sharp": "csharp",
     # Salesforce
     "apex": "java",
-    "sfxml": "html",          # SF metadata XML → HTML parser (close enough for structure)
+    "sfxml": "html",  # SF metadata XML → HTML parser (close enough for structure)
     "aura": "html",
     "visualforce": "html",
     # JSONC (JSON with comments) → json grammar
@@ -124,6 +140,24 @@ REGEX_ONLY_LANGUAGES = frozenset({"foxpro", "yaml", "hcl"})
 
 # Track parse error stats
 parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
+
+
+def _plugin_language_extensions() -> dict[str, str]:
+    try:
+        from roam.plugins import get_plugin_language_extensions
+
+        return get_plugin_language_extensions()
+    except Exception:
+        return {}
+
+
+def _plugin_grammar_aliases() -> dict[str, str]:
+    try:
+        from roam.plugins import get_plugin_language_grammar_aliases
+
+        return get_plugin_language_grammar_aliases()
+    except Exception:
+        return {}
 
 
 def _find_sct_path(scx_path: Path) -> Path | None:
@@ -170,7 +204,11 @@ def detect_language(file_path: str) -> str | None:
     if file_path.endswith("-meta.xml"):
         return "sfxml"
     _, ext = os.path.splitext(file_path)
-    return EXTENSION_MAP.get(ext)
+    ext = ext.lower()
+    language = EXTENSION_MAP.get(ext)
+    if language:
+        return language
+    return _plugin_language_extensions().get(ext)
 
 
 def read_source(path: Path) -> bytes | None:
@@ -203,7 +241,7 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
 
     # Find all <script...>...</script> regions
     script_pattern = re.compile(
-        r'<script(\s[^>]*)?>.*?</script>',
+        r"<script(\s[^>]*)?>.*?</script>",
         re.DOTALL,
     )
 
@@ -216,7 +254,7 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
             effective_lang = "typescript"
 
         # Find the line range for the script content (excluding the tags)
-        block_start = text[:match.start()].count("\n")
+        block_start = text[: match.start()].count("\n")
 
         # Find the opening tag end line and closing tag start line
         inner_text = match.group(0)
@@ -275,7 +313,8 @@ def parse_file(path: Path, language: str | None = None):
         source, language = _preprocess_vue(source)
 
     # Resolve grammar alias (e.g. apex → java, sfxml → html)
-    grammar = GRAMMAR_ALIASES.get(language, language)
+    plugin_alias = _plugin_grammar_aliases().get(language)
+    grammar = plugin_alias or GRAMMAR_ALIASES.get(language, language)
 
     try:
         parser = get_parser(grammar)
@@ -304,7 +343,7 @@ def extract_vue_template(source: bytes) -> tuple[str, int] | None:
     text = source.decode("utf-8", errors="replace")
 
     # Find the outer <template...> open tag (the SFC root template)
-    outer_open = re.search(r'<template(\s[^>]*)?>',  text)
+    outer_open = re.search(r"<template(\s[^>]*)?>", text)
     if not outer_open:
         return None
 
@@ -313,10 +352,10 @@ def extract_vue_template(source: bytes) -> tuple[str, int] | None:
 
     # Scan for all <template...> and </template> tags after the outer open
     # Use non-greedy [^>]*? so that self-closing / isn't consumed by attributes
-    tag_re = re.compile(r'<(/?)template\b([^>]*?)(/?)>')
+    tag_re = re.compile(r"<(/?)template\b([^>]*?)(/?)>")
     for m in tag_re.finditer(text, pos=content_start):
-        is_closing = m.group(1) == '/'
-        is_self_closing = m.group(3) == '/'
+        is_closing = m.group(1) == "/"
+        is_self_closing = m.group(3) == "/"
 
         if is_self_closing:
             continue  # <template ... /> doesn't affect depth
@@ -324,7 +363,7 @@ def extract_vue_template(source: bytes) -> tuple[str, int] | None:
             depth -= 1
             if depth == 0:
                 # Found the matching close for the outer template
-                content = text[content_start:m.start()]
+                content = text[content_start : m.start()]
                 start_line = text[:content_start].count("\n") + 1
                 return content, start_line
         else:
@@ -353,16 +392,16 @@ def scan_template_references(
     # Directives: v-if="expression", v-for="expr", v-show="expr", etc.
     # Event handlers: @event="handler" or v-on:event="handler"
     expr_patterns = [
-        re.compile(r'\{\{(.*?)\}\}', re.DOTALL),           # {{ expr }}
-        re.compile(r'(?::|v-bind:)[\w.-]+="([^"]*)"'),     # :attr="expr"
-        re.compile(r'v-[\w-]+="([^"]*)"'),                  # v-directive="expr"
-        re.compile(r'(?:@|v-on:)[\w.-]+="([^"]*)"'),       # @event="handler"
+        re.compile(r"\{\{(.*?)\}\}", re.DOTALL),  # {{ expr }}
+        re.compile(r'(?::|v-bind:)[\w.-]+="([^"]*)"'),  # :attr="expr"
+        re.compile(r'v-[\w-]+="([^"]*)"'),  # v-directive="expr"
+        re.compile(r'(?:@|v-on:)[\w.-]+="([^"]*)"'),  # @event="handler"
     ]
     # Identifier pattern
-    ident_re = re.compile(r'\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b')
+    ident_re = re.compile(r"\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b")
 
     # Also detect PascalCase component names: <MyComponent> → MyComponent
-    component_re = re.compile(r'<([A-Z][a-zA-Z0-9]+)')
+    component_re = re.compile(r"<([A-Z][a-zA-Z0-9]+)")
 
     refs = []
     seen = set()
@@ -374,18 +413,20 @@ def scan_template_references(
         for match in pattern.finditer(template_content):
             expr = match.group(1)
             # Compute line number from match position
-            line_num = start_line + template_content[:match.start()].count("\n")
+            line_num = start_line + template_content[: match.start()].count("\n")
             for ident_match in ident_re.finditer(expr):
                 name = ident_match.group(1)
                 if name in known_symbols and name not in seen:
                     seen.add(name)
-                    refs.append({
-                        "source_name": None,
-                        "target_name": name,
-                        "kind": "template",
-                        "line": line_num,
-                        "source_file": file_path,
-                    })
+                    refs.append(
+                        {
+                            "source_name": None,
+                            "target_name": name,
+                            "kind": "template",
+                            "line": line_num,
+                            "source_file": file_path,
+                        }
+                    )
 
     # Pass 2: Detect PascalCase component usage (per-line — tags don't span lines)
     lines = template_content.split("\n")
@@ -395,13 +436,15 @@ def scan_template_references(
             name = match.group(1)
             if name in known_symbols and name not in seen:
                 seen.add(name)
-                refs.append({
-                    "source_name": None,
-                    "target_name": name,
-                    "kind": "template",
-                    "line": line_num,
-                    "source_file": file_path,
-                })
+                refs.append(
+                    {
+                        "source_name": None,
+                        "target_name": name,
+                        "kind": "template",
+                        "line": line_num,
+                        "source_file": file_path,
+                    }
+                )
 
     return refs
 

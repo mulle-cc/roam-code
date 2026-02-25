@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 import os
-from pathlib import Path
+import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 from roam.db.schema import SCHEMA_SQL
 
@@ -32,6 +32,7 @@ def _load_project_config(project_root: Path) -> dict:
     if config_path.exists():
         try:
             import json
+
             return json.loads(config_path.read_text(encoding="utf-8"))
         except Exception:
             pass
@@ -45,6 +46,7 @@ def write_project_config(config: dict, project_root: Path | None = None) -> Path
     Returns the path of the written file.
     """
     import json
+
     if project_root is None:
         project_root = find_project_root()
     roam_dir = project_root / DEFAULT_DB_DIR
@@ -134,6 +136,7 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA mmap_size=268435456")  # 256MB memory-mapped I/O
     return conn
 
 
@@ -146,6 +149,9 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "file_stats", "health_score", "REAL")
     _safe_alter(conn, "file_stats", "cochange_entropy", "REAL")
     _safe_alter(conn, "file_stats", "cognitive_load", "REAL")
+    _safe_alter(conn, "file_stats", "coverage_pct", "REAL")
+    _safe_alter(conn, "file_stats", "covered_lines", "INTEGER")
+    _safe_alter(conn, "file_stats", "coverable_lines", "INTEGER")
     _safe_alter(conn, "snapshots", "tangle_ratio", "REAL")
     _safe_alter(conn, "snapshots", "avg_complexity", "REAL")
     _safe_alter(conn, "snapshots", "brain_methods", "INTEGER")
@@ -155,6 +161,9 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "symbol_metrics", "halstead_difficulty", "REAL")
     _safe_alter(conn, "symbol_metrics", "halstead_effort", "REAL")
     _safe_alter(conn, "symbol_metrics", "halstead_bugs", "REAL")
+    _safe_alter(conn, "symbol_metrics", "coverage_pct", "REAL")
+    _safe_alter(conn, "symbol_metrics", "covered_lines", "INTEGER")
+    _safe_alter(conn, "symbol_metrics", "coverable_lines", "INTEGER")
     # v7.6: file role classification
     _safe_alter(conn, "files", "file_role", "TEXT DEFAULT 'source'")
     # v8.3: math_signals table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
@@ -163,54 +172,42 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "math_signals", "str_concat_in_loop", "INTEGER DEFAULT 0")
     _safe_alter(conn, "math_signals", "loop_invariant_calls", "TEXT")
     _safe_alter(conn, "math_signals", "loop_bound_small", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "calls_in_loops_qualified", "TEXT")
+    _safe_alter(conn, "math_signals", "loop_lookup_calls", "TEXT")
+    _safe_alter(conn, "math_signals", "front_ops_in_loop", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "loop_with_multiplication", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "loop_with_modulo", "INTEGER DEFAULT 0")
     # Cross-language bridge metadata on edges
     _safe_alter(conn, "edges", "bridge", "TEXT")
     _safe_alter(conn, "edges", "confidence", "REAL")
-    # v9.0: runtime_stats table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
-    # Migration: ensure table exists for databases created before this version
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS runtime_stats ("
-        "id INTEGER PRIMARY KEY, "
-        "symbol_id INTEGER REFERENCES symbols(id), "
-        "symbol_name TEXT, "
-        "file_path TEXT, "
-        "trace_source TEXT, "
-        "call_count INTEGER DEFAULT 0, "
-        "p50_latency_ms REAL, "
-        "p99_latency_ms REAL, "
-        "error_rate REAL DEFAULT 0.0, "
-        "last_seen TEXT, "
-        "ingested_at TEXT DEFAULT (datetime('now'))"
-        ")"
-    )
-    # v9.x: vulnerabilities table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS vulnerabilities ("
-        "id INTEGER PRIMARY KEY, "
-        "cve_id TEXT, "
-        "package_name TEXT NOT NULL, "
-        "severity TEXT, "
-        "title TEXT, "
-        "source TEXT, "
-        "matched_symbol_id INTEGER REFERENCES symbols(id), "
-        "matched_file TEXT, "
-        "reachable INTEGER DEFAULT 0, "
-        "shortest_path TEXT, "
-        "hop_count INTEGER, "
-        "ingested_at TEXT DEFAULT (datetime('now'))"
-        ")"
-    )
+    # v11: source file tracking for O(changed) incremental edge rebuild
+    _safe_alter(conn, "edges", "source_file_id", "INTEGER REFERENCES files(id) ON DELETE CASCADE")
+    # v9.0+: runtime_stats, vulnerabilities, symbol_tfidf, metric_snapshots tables
+    # are all defined in SCHEMA_SQL (CREATE TABLE IF NOT EXISTS) and created above
+    # by conn.executescript(SCHEMA_SQL). No inline duplicates needed here.
+    # v8.1: runtime_stats OTel DB semantic attributes
+    _safe_alter(conn, "runtime_stats", "otel_db_system", "TEXT")
+    _safe_alter(conn, "runtime_stats", "otel_db_operation", "TEXT")
+    _safe_alter(conn, "runtime_stats", "otel_db_statement_type", "TEXT")
+    # v8.6: expanded SNA metric vector + composite debt score
+    _safe_alter(conn, "graph_metrics", "closeness", "REAL DEFAULT 0")
+    _safe_alter(conn, "graph_metrics", "eigenvector", "REAL DEFAULT 0")
+    _safe_alter(conn, "graph_metrics", "clustering_coefficient", "REAL DEFAULT 0")
+    _safe_alter(conn, "graph_metrics", "debt_score", "REAL DEFAULT 0")
+
+    # v11: drop redundant idx_edges_kind (subsumed by idx_edges_kind_target)
+    conn.execute("DROP INDEX IF EXISTS idx_edges_kind")
     # TF-IDF semantic search table — recreate with ON DELETE CASCADE if missing
     # Drop and recreate to ensure proper FK constraint (data is recomputed on index)
     _ensure_tfidf_cascade(conn)
+    # v11: FTS5 full-text search for symbols (BM25 ranking, all in C)
+    _ensure_fts5_table(conn)
 
 
 def _ensure_tfidf_cascade(conn: sqlite3.Connection):
     """Ensure symbol_tfidf has ON DELETE CASCADE (missing in early schema)."""
     # Check if table exists and has proper FK — simplest: check table_info
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='symbol_tfidf'"
-    ).fetchone()
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='symbol_tfidf'").fetchone()
     if row is None:
         # Table doesn't exist yet; SCHEMA_SQL will create it with CASCADE
         return
@@ -228,6 +225,28 @@ def _ensure_tfidf_cascade(conn: sqlite3.Connection):
     )
 
 
+def _ensure_fts5_table(conn: sqlite3.Connection):
+    """Create the FTS5 full-text search virtual table if not present.
+
+    FTS5 pushes tokenization, indexing, and BM25 ranking entirely into
+    SQLite's C engine — 1000x faster than the Python-side TF-IDF approach.
+    Falls back gracefully if FTS5 is not compiled into the SQLite build.
+    """
+    # Check if already exists
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
+    if row:
+        return
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE symbol_fts USING fts5("
+            "name, qualified_name, signature, kind, file_path, "
+            "tokenize='porter unicode61'"
+            ")"
+        )
+    except sqlite3.OperationalError:
+        pass  # FTS5 not available in this SQLite build
+
+
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):
     """Add a column to a table if it doesn't exist."""
     try:
@@ -240,7 +259,7 @@ def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str
 # Batched IN-clause helpers — avoid SQLITE_MAX_VARIABLE_NUMBER (default 999)
 # ---------------------------------------------------------------------------
 
-_BATCH_SIZE = 400  # conservative — leaves room for extra params
+_BATCH_SIZE = 500  # leave room for extra params (SQLite limit 999)
 
 
 def batched_in(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
@@ -267,7 +286,7 @@ def batched_in(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
 
     rows = []
     for i in range(0, len(ids), chunk):
-        batch = ids[i:i + chunk]
+        batch = ids[i : i + chunk]
         ph = ",".join("?" for _ in batch)
         q = sql.replace("{ph}", ph)
         params = list(pre) + batch * n_ph + list(post)
@@ -288,7 +307,7 @@ def batched_count(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
 
     total = 0
     for i in range(0, len(ids), chunk):
-        batch = ids[i:i + chunk]
+        batch = ids[i : i + chunk]
         ph = ",".join("?" for _ in batch)
         q = sql.replace("{ph}", ph)
         params = list(pre) + batch * n_ph + list(post)
@@ -304,12 +323,35 @@ def db_exists(project_root: Path | None = None) -> bool:
 
 @contextmanager
 def open_db(readonly: bool = False, project_root: Path | None = None):
-    """Context manager for database access. Creates schema if needed."""
+    """Context manager for database access. Creates schema if needed.
+
+    Raises a descriptive ``click.ClickException`` if the database file is
+    missing or corrupted so that agents receive actionable remediation steps
+    instead of a raw SQLite traceback.
+    """
+    import click
+
     db_path = get_db_path(project_root)
-    conn = get_connection(db_path, readonly=readonly)
+    try:
+        conn = get_connection(db_path, readonly=readonly)
+    except sqlite3.DatabaseError as exc:
+        raise click.ClickException(
+            f"Database error: {exc}\n"
+            "  The roam index may be corrupted. Run `roam init --force` to rebuild it\n"
+            "  from scratch, or delete .roam/index.db and run `roam init`."
+        ) from exc
     try:
         if not readonly:
-            ensure_schema(conn)
+            try:
+                ensure_schema(conn)
+            except sqlite3.DatabaseError as exc:
+                conn.close()
+                raise click.ClickException(
+                    f"Database schema error: {exc}\n"
+                    "  The roam index may be corrupted or from an incompatible version.\n"
+                    "  Run `roam init --force` to rebuild it, or delete .roam/index.db\n"
+                    "  and run `roam init`."
+                ) from exc
         yield conn
         if not readonly:
             conn.commit()

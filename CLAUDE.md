@@ -4,9 +4,16 @@
 
 roam-code is a CLI tool that gives AI coding agents instant codebase comprehension.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. 95 commands, 27 languages, 100% local, zero API keys.
+a local SQLite DB. 137 commands, 101 MCP tools,
+26 languages, 100% local, zero API keys.
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
+
+## Documentation Hub
+
+- Getting started tutorial: `docs/site/getting-started.html`
+- Command reference with examples: `docs/site/command-reference.html`
+- Architecture guide and diagram: `docs/site/architecture.html`
 
 ## Quick reference
 
@@ -38,7 +45,7 @@ roam health
 ```
 src/roam/
   cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES
-  mcp_server.py       # FastMCP server (61 tools, 2 resources) + `roam mcp` CLI command
+  mcp_server.py       # FastMCP server (101 tools, 10 resources, 5 prompts) + `roam mcp` CLI command
   __init__.py          # Version string (reads from pyproject.toml via importlib.metadata)
   db/
     schema.py          # SQLite schema (CREATE TABLE statements)
@@ -69,7 +76,7 @@ src/roam/
   languages/
     base.py            # Abstract LanguageExtractor — all languages inherit this
     registry.py        # Language detection + grammar aliasing
-    *_lang.py          # One file per language (python, javascript, typescript, java, go, rust, c, csharp, php, ruby, objc, foxpro, apex, aura, visualforce, sfxml, hcl, yaml, generic)
+    *_lang.py          # One file per language (python, javascript, typescript, java, go, rust, c, csharp, php, ruby, foxpro, apex, aura, visualforce, sfxml, hcl, yaml, generic)
   graph/
     builder.py         # DB → NetworkX graph
     pagerank.py        # PageRank + centrality metrics
@@ -77,8 +84,10 @@ src/roam/
     clusters.py        # Louvain community detection
     layers.py          # Topological layer detection — returns {node_id: layer_number}
     pathfinding.py     # k-shortest paths for trace
-    split.py           # Intra-file decomposition
-    why.py             # Symbol role classification
+    dark_matter.py     # Hidden co-change coupling detection
+    diff.py            # Graph-level diff analysis
+    propagation.py     # Propagation cost computation
+    spectral.py        # Fiedler vector bisection + spectral gap
     anomaly.py         # Statistical anomaly detection (Modified Z-Score, Theil-Sen, Mann-Kendall, CUSUM)
     simulate.py        # Counterfactual architecture simulation (graph cloning + transforms)
     partition.py       # Multi-agent work partitioning (Louvain-based)
@@ -101,7 +110,7 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # One module per CLI command (93 modules, 95 commands)
+    cmd_*.py           # One module per CLI command (134 modules, 137 commands)
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
@@ -224,7 +233,7 @@ tests/                 # 71 test files
 - tree-sitter >= 0.23 (AST parsing)
 - tree-sitter-language-pack >= 0.6 (165+ grammars)
 - networkx >= 3.0 (graph algorithms)
-- Optional: fastmcp >= 2.0 (MCP server — `pip install roam-code[mcp]`)
+- Optional: fastmcp >= 2.0 (MCP server — `pip install "roam-code[mcp]"`)
 - Dev: pytest >= 7.0, pytest-xdist >= 3.0, ruff >= 0.4
 
 ## Version bumping
@@ -250,5 +259,5 @@ Additional commands: `roam health` (0-100 score), `roam impact <name>` (what bre
 `roam simulate move <sym> <file>` (what-if architecture), `roam orchestrate` (multi-agent partitioning),
 `roam adversarial` (attack surface review), `roam mutate move <sym> <file>` (code transforms).
 
-Run `roam --help` for all 95 commands. Use `roam --json <cmd>` for structured output.
+Run `roam --help` for all 137 commands. Use `roam --json <cmd>` for structured output.
 Use `roam --sarif health` for CI integration (SARIF 2.1.0).

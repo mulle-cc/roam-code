@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS edges (
     kind TEXT NOT NULL,
     line INTEGER,
     bridge TEXT,
-    confidence REAL
+    confidence REAL,
+    source_file_id INTEGER REFERENCES files(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS file_edges (
@@ -77,7 +78,10 @@ CREATE TABLE IF NOT EXISTS file_stats (
     complexity REAL DEFAULT 0,
     health_score REAL DEFAULT NULL,
     cochange_entropy REAL DEFAULT NULL,
-    cognitive_load REAL DEFAULT NULL
+    cognitive_load REAL DEFAULT NULL,
+    coverage_pct REAL DEFAULT NULL,
+    covered_lines INTEGER DEFAULT NULL,
+    coverable_lines INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS graph_metrics (
@@ -85,7 +89,11 @@ CREATE TABLE IF NOT EXISTS graph_metrics (
     pagerank REAL DEFAULT 0,
     in_degree INTEGER DEFAULT 0,
     out_degree INTEGER DEFAULT 0,
-    betweenness REAL DEFAULT 0
+    betweenness REAL DEFAULT 0,
+    closeness REAL DEFAULT 0,
+    eigenvector REAL DEFAULT 0,
+    clustering_coefficient REAL DEFAULT 0,
+    debt_score REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS clusters (
@@ -100,7 +108,6 @@ CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
-CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
 CREATE INDEX IF NOT EXISTS idx_file_edges_source ON file_edges(source_file_id);
 CREATE INDEX IF NOT EXISTS idx_file_edges_target ON file_edges(target_file_id);
 CREATE INDEX IF NOT EXISTS idx_git_changes_file ON git_file_changes(file_id);
@@ -110,6 +117,15 @@ CREATE INDEX IF NOT EXISTS idx_graph_metrics_pagerank ON graph_metrics(pagerank 
 CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_id);
 CREATE INDEX IF NOT EXISTS idx_edges_kind_target ON edges(kind, target_id);
 CREATE INDEX IF NOT EXISTS idx_file_stats_churn ON file_stats(total_churn DESC);
+
+-- v11: composite indexes for hot query paths
+CREATE INDEX IF NOT EXISTS idx_edges_source_target ON edges(source_id, target_id);
+CREATE INDEX IF NOT EXISTS idx_edges_source_file ON edges(source_file_id);
+CREATE INDEX IF NOT EXISTS idx_symbols_file_kind ON symbols(file_id, kind);
+CREATE INDEX IF NOT EXISTS idx_symbols_file_exported ON symbols(file_id, is_exported);
+CREATE INDEX IF NOT EXISTS idx_file_edges_source_target ON file_edges(source_file_id, target_file_id);
+CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
+CREATE INDEX IF NOT EXISTS idx_clusters_cluster ON clusters(cluster_id);
 
 -- Hypergraph: n-ary commit patterns (beyond pairwise co-change)
 CREATE TABLE IF NOT EXISTS git_hyperedges (
@@ -144,7 +160,10 @@ CREATE TABLE IF NOT EXISTS symbol_metrics (
     halstead_volume REAL DEFAULT 0,
     halstead_difficulty REAL DEFAULT 0,
     halstead_effort REAL DEFAULT 0,
-    halstead_bugs REAL DEFAULT 0
+    halstead_bugs REAL DEFAULT 0,
+    coverage_pct REAL DEFAULT NULL,
+    covered_lines INTEGER DEFAULT NULL,
+    coverable_lines INTEGER DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbol_metrics_complexity
@@ -156,13 +175,18 @@ CREATE TABLE IF NOT EXISTS math_signals (
     loop_depth INTEGER DEFAULT 0,
     has_nested_loops INTEGER DEFAULT 0,
     calls_in_loops TEXT,
+    calls_in_loops_qualified TEXT,
     subscript_in_loops INTEGER DEFAULT 0,
     has_self_call INTEGER DEFAULT 0,
     loop_with_compare INTEGER DEFAULT 0,
     loop_with_accumulator INTEGER DEFAULT 0,
+    loop_with_multiplication INTEGER DEFAULT 0,
+    loop_with_modulo INTEGER DEFAULT 0,
     self_call_count INTEGER DEFAULT 0,
     str_concat_in_loop INTEGER DEFAULT 0,
     loop_invariant_calls TEXT,
+    loop_lookup_calls TEXT,
+    front_ops_in_loop INTEGER DEFAULT 0,
     loop_bound_small INTEGER DEFAULT 0
 );
 
@@ -227,6 +251,9 @@ CREATE TABLE IF NOT EXISTS runtime_stats (
     p99_latency_ms REAL,
     error_rate REAL DEFAULT 0.0,
     last_seen TEXT,
+    otel_db_system TEXT,
+    otel_db_operation TEXT,
+    otel_db_statement_type TEXT,
     ingested_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_runtime_stats_symbol ON runtime_stats(symbol_id);
@@ -257,4 +284,52 @@ CREATE TABLE IF NOT EXISTS symbol_tfidf (
     terms TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Optional dense vectors for local ONNX semantic search
+CREATE TABLE IF NOT EXISTS symbol_embeddings (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    vector TEXT NOT NULL,
+    dims INTEGER NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'onnx',
+    model_id TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_embeddings_provider
+    ON symbol_embeddings(provider);
+
+-- Metric trends: fine-grained metric snapshots for sparkline tracking
+CREATE TABLE IF NOT EXISTS metric_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    metric_name TEXT NOT NULL,
+    metric_value REAL NOT NULL,
+    details TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_metric_snapshots_name_ts
+    ON metric_snapshots(metric_name, timestamp);
+
+-- Taint analysis: per-function summaries and cross-function findings
+CREATE TABLE IF NOT EXISTS taint_summaries (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    param_taints_return TEXT,
+    param_to_sink TEXT,
+    return_from_source INTEGER DEFAULT 0,
+    direct_sources TEXT,
+    direct_sinks TEXT,
+    is_sanitizer INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS taint_findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    sink_symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    sink_type TEXT NOT NULL,
+    call_chain TEXT,
+    chain_length INTEGER DEFAULT 1,
+    sanitized INTEGER DEFAULT 0,
+    confidence REAL DEFAULT 0.8
+);
+CREATE INDEX IF NOT EXISTS idx_taint_findings_source ON taint_findings(source_symbol_id);
+CREATE INDEX IF NOT EXISTS idx_taint_findings_sink ON taint_findings(sink_symbol_id);
 """

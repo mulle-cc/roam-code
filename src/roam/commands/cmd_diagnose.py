@@ -10,23 +10,22 @@ from __future__ import annotations
 
 import click
 
+from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 
 def _get_symbol_metrics(conn, sym_id):
     """Fetch complexity and churn for a symbol."""
     sm = conn.execute(
-        "SELECT cognitive_complexity, nesting_depth, line_count "
-        "FROM symbol_metrics WHERE symbol_id = ?",
+        "SELECT cognitive_complexity, nesting_depth, line_count FROM symbol_metrics WHERE symbol_id = ?",
         (sym_id,),
     ).fetchone()
 
     gm = conn.execute(
-        "SELECT pagerank, in_degree, out_degree, betweenness "
-        "FROM graph_metrics WHERE symbol_id = ?",
+        "SELECT pagerank, in_degree, out_degree, betweenness FROM graph_metrics WHERE symbol_id = ?",
         (sym_id,),
     ).fetchone()
 
@@ -63,18 +62,12 @@ def _build_distribution_stats(conn):
     """
     import math
 
-    commit_rows = conn.execute(
-        "SELECT commit_count FROM file_stats WHERE commit_count IS NOT NULL"
-    ).fetchall()
+    commit_rows = conn.execute("SELECT commit_count FROM file_stats WHERE commit_count IS NOT NULL").fetchall()
     cc_rows = conn.execute(
         "SELECT cognitive_complexity FROM symbol_metrics WHERE cognitive_complexity IS NOT NULL"
     ).fetchall()
-    health_rows = conn.execute(
-        "SELECT health_score FROM file_stats WHERE health_score IS NOT NULL"
-    ).fetchall()
-    entropy_rows = conn.execute(
-        "SELECT cochange_entropy FROM file_stats WHERE cochange_entropy IS NOT NULL"
-    ).fetchall()
+    health_rows = conn.execute("SELECT health_score FROM file_stats WHERE health_score IS NOT NULL").fetchall()
+    entropy_rows = conn.execute("SELECT cochange_entropy FROM file_stats WHERE cochange_entropy IS NOT NULL").fetchall()
 
     def _stats(values):
         if not values:
@@ -104,9 +97,11 @@ def _risk_score(metrics, dist_stats=None):
     any project.  Falls back to fixed normalization otherwise.
     """
     if dist_stats:
+
         def _z(value, key):
             mean, std = dist_stats[key]
             return max(0, (value - mean) / std)
+
         # Clip z-scores at 3σ then normalize to [0, 1]
         churn_norm = min(_z(metrics["commits"], "commits") / 3, 1.0)
         cc_norm = min(_z(metrics["complexity"], "complexity") / 3, 1.0)
@@ -121,10 +116,7 @@ def _risk_score(metrics, dist_stats=None):
         entropy_risk = metrics["entropy"]
 
     return round(
-        churn_norm * 0.30
-        + cc_norm * 0.30
-        + health_risk * 0.25
-        + entropy_risk * 0.15,
+        churn_norm * 0.30 + cc_norm * 0.30 + health_risk * 0.25 + entropy_risk * 0.15,
         3,
     )
 
@@ -190,14 +182,18 @@ def diagnose(ctx, name, depth):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            click.echo(f"Symbol not found: {name}")
+            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
             raise SystemExit(1)
 
         sym_id = sym["id"]
         G = build_symbol_graph(conn)
 
         if sym_id not in G:
-            click.echo(f"Symbol not in dependency graph: {name}")
+            click.echo(
+                f"Symbol '{name}' is not in the dependency graph.\n"
+                "  Tip: Run `roam index` to rebuild the graph. If the symbol has no\n"
+                "       callers or callees, it may not appear in the graph."
+            )
             raise SystemExit(1)
 
         target_metrics = _get_symbol_metrics(conn, sym_id)
@@ -242,17 +238,19 @@ def diagnose(ctx, name, depth):
                     continue
                 metrics = _get_symbol_metrics(conn, sid)
                 risk = _risk_score(metrics, dist_stats)
-                ranked.append({
-                    "name": row["qualified_name"] or row["name"],
-                    "kind": abbrev_kind(row["kind"]),
-                    "location": loc(row["path"], row["line_start"]),
-                    "risk_score": risk,
-                    "complexity": metrics["complexity"],
-                    "commits": metrics["commits"],
-                    "health": metrics["health"],
-                    "entropy": metrics["entropy"],
-                    "direction": direction,
-                })
+                ranked.append(
+                    {
+                        "name": row["qualified_name"] or row["name"],
+                        "kind": abbrev_kind(row["kind"]),
+                        "location": loc(row["path"], row["line_start"]),
+                        "risk_score": risk,
+                        "complexity": metrics["complexity"],
+                        "commits": metrics["commits"],
+                        "health": metrics["health"],
+                        "entropy": metrics["entropy"],
+                        "direction": direction,
+                    }
+                )
             ranked.sort(key=lambda x: -x["risk_score"])
             return ranked
 
@@ -279,20 +277,36 @@ def diagnose(ctx, name, depth):
         else:
             verdict = "No upstream/downstream symbols found within depth range."
 
+        _target_name = sym["qualified_name"] or sym["name"]
+        _top_suspect = all_suspects[0]["name"] if all_suspects else ""
+        _next_steps = suggest_next_steps(
+            "diagnose",
+            {
+                "symbol": _target_name,
+                "top_suspect": _top_suspect,
+            },
+        )
+
         if json_mode:
-            click.echo(to_json(json_envelope("diagnose",
-                summary={
-                    "target": sym["qualified_name"] or sym["name"],
-                    "verdict": verdict,
-                    "upstream_count": len(upstream_ranked),
-                    "downstream_count": len(downstream_ranked),
-                },
-                target_metrics=target_metrics,
-                upstream=upstream_ranked[:15],
-                downstream=downstream_ranked[:15],
-                cochange_partners=cochanges,
-                recent_commits=recent,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "diagnose",
+                        summary={
+                            "target": _target_name,
+                            "verdict": verdict,
+                            "upstream_count": len(upstream_ranked),
+                            "downstream_count": len(downstream_ranked),
+                        },
+                        target_metrics=target_metrics,
+                        upstream=upstream_ranked[:15],
+                        downstream=downstream_ranked[:15],
+                        cochange_partners=cochanges,
+                        recent_commits=recent,
+                        next_steps=_next_steps,
+                    )
+                )
+            )
             return
 
         # Text output
@@ -300,35 +314,53 @@ def diagnose(ctx, name, depth):
         sym_name = sym["qualified_name"] or sym["name"]
         click.echo(f"Diagnose: {sym_name}")
         click.echo(f"  {loc(target_metrics['file_path'], sym['line_start'])}")
-        click.echo(f"  complexity={target_metrics['complexity']}, "
-                    f"commits={target_metrics['commits']}, "
-                    f"health={target_metrics['health']}/10\n")
+        click.echo(
+            f"  complexity={target_metrics['complexity']}, "
+            f"commits={target_metrics['commits']}, "
+            f"health={target_metrics['health']}/10\n"
+        )
 
         if upstream_ranked:
             click.echo("Upstream suspects (callers, ranked by risk):\n")
             rows = [
-                [r["name"], r["kind"], f"{r['risk_score']:.2f}",
-                 str(r["complexity"]), str(r["commits"]),
-                 f"{r['health']}/10", r["location"]]
+                [
+                    r["name"],
+                    r["kind"],
+                    f"{r['risk_score']:.2f}",
+                    str(r["complexity"]),
+                    str(r["commits"]),
+                    f"{r['health']}/10",
+                    r["location"],
+                ]
                 for r in upstream_ranked[:10]
             ]
-            click.echo(format_table(
-                ["Symbol", "Kind", "Risk", "CC", "Commits", "Health", "Location"],
-                rows,
-            ))
+            click.echo(
+                format_table(
+                    ["Symbol", "Kind", "Risk", "CC", "Commits", "Health", "Location"],
+                    rows,
+                )
+            )
 
         if downstream_ranked:
             click.echo("\nDownstream suspects (callees, ranked by risk):\n")
             rows = [
-                [r["name"], r["kind"], f"{r['risk_score']:.2f}",
-                 str(r["complexity"]), str(r["commits"]),
-                 f"{r['health']}/10", r["location"]]
+                [
+                    r["name"],
+                    r["kind"],
+                    f"{r['risk_score']:.2f}",
+                    str(r["complexity"]),
+                    str(r["commits"]),
+                    f"{r['health']}/10",
+                    r["location"],
+                ]
                 for r in downstream_ranked[:10]
             ]
-            click.echo(format_table(
-                ["Symbol", "Kind", "Risk", "CC", "Commits", "Health", "Location"],
-                rows,
-            ))
+            click.echo(
+                format_table(
+                    ["Symbol", "Kind", "Risk", "CC", "Commits", "Health", "Location"],
+                    rows,
+                )
+            )
 
         if cochanges:
             click.echo("\nCo-change partners (files that change together):\n")
@@ -339,3 +371,7 @@ def diagnose(ctx, name, depth):
             click.echo(f"\nRecent commits to {target_metrics['file_path']}:\n")
             for c in recent:
                 click.echo(f"  {c['hash']}  {c['author']:<20} {c['message']}")
+
+        _ns_text = format_next_steps_text(_next_steps)
+        if _ns_text:
+            click.echo(_ns_text)

@@ -14,40 +14,55 @@ from __future__ import annotations
 
 import sqlite3
 
-
 # ── Node-type mappings per language family ────────────────────────────
 
 # Control flow nodes that increment complexity AND increase nesting
 _CONTROL_FLOW = {
     # Python
-    "if_statement", "for_statement", "while_statement",
-    "try_statement", "except_clause", "with_statement",
+    "if_statement",
+    "for_statement",
+    "while_statement",
+    "try_statement",
+    "except_clause",
+    "with_statement",
     "match_statement",
     # JS/TS
-    "if_statement", "for_statement", "for_in_statement",
-    "while_statement", "do_statement", "switch_statement",
-    "try_statement", "catch_clause",
+    "if_statement",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "switch_statement",
+    "try_statement",
+    "catch_clause",
     # Java/C#/Go/Rust
-    "for_statement", "enhanced_for_statement", "foreach_statement",
-    "while_statement", "do_statement", "if_expression",
+    "for_statement",
+    "enhanced_for_statement",
+    "foreach_statement",
+    "while_statement",
+    "do_statement",
+    "if_expression",
     "match_expression",
     # General
-    "conditional_expression", "ternary_expression",
+    "conditional_expression",
+    "ternary_expression",
 }
 
 # Continuation nodes: +1 for flow break but NO nesting increment.
 # Per SonarSource cognitive complexity spec: elif/else/case are continuations
 # of the same mental model, not new nesting levels.
 _CONTINUATION_FLOW = {
-    "elif_clause", "else_clause",       # Python
-    "case_clause",                       # Python match/case
-    "switch_case",                       # JS/TS case
-    "match_arm",                         # Rust
+    "elif_clause",
+    "else_clause",  # Python
+    "case_clause",  # Python match/case
+    "switch_case",  # JS/TS case
+    "match_arm",  # Rust
 }
 
 # Nodes that only increment complexity (no extra nesting)
 _FLOW_BREAK = {
-    "break_statement", "continue_statement",
+    "break_statement",
+    "continue_statement",
     "goto_statement",
 }
 
@@ -62,23 +77,35 @@ _BOOL_OP_TOKENS = {"&&", "||", "and", "or", "??"}
 
 # Return/throw nodes
 _RETURN_NODES = {
-    "return_statement", "throw_statement", "raise_statement",
-    "yield", "yield_statement",
+    "return_statement",
+    "throw_statement",
+    "raise_statement",
+    "yield",
+    "yield_statement",
 }
 
 # Function/lambda definition nodes (for callback depth)
 _FUNCTION_NODES = {
-    "function_definition", "function_declaration",
-    "method_definition", "method_declaration",
-    "arrow_function", "lambda", "lambda_expression",
-    "anonymous_function", "closure_expression",
-    "function_expression", "generator_function_declaration",
+    "function_definition",
+    "function_declaration",
+    "method_definition",
+    "method_declaration",
+    "arrow_function",
+    "lambda",
+    "lambda_expression",
+    "anonymous_function",
+    "closure_expression",
+    "function_expression",
+    "generator_function_declaration",
 }
 
 # Parameter list nodes
 _PARAM_NODES = {
-    "parameters", "formal_parameters", "parameter_list",
-    "function_parameters", "type_parameters",
+    "parameters",
+    "formal_parameters",
+    "parameter_list",
+    "function_parameters",
+    "type_parameters",
 }
 
 
@@ -91,8 +118,13 @@ def _count_params(node) -> int:
             count = 0
             for p in child.children:
                 if p.is_named and p.type not in (
-                    "(", ")", ",", "comment", "block_comment",
-                    "type_annotation", "type",
+                    "(",
+                    ")",
+                    ",",
+                    "comment",
+                    "block_comment",
+                    "type_annotation",
+                    "type",
                 ):
                     count += 1
             return count
@@ -152,9 +184,7 @@ def _walk_complexity(node, source: bytes, depth: int = 0) -> dict:
         # Check if it's actually a boolean op (not arithmetic)
         for child in node.children:
             if not child.is_named:
-                op_text = source[child.start_byte:child.end_byte].decode(
-                    "utf-8", errors="replace"
-                )
+                op_text = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
                 if op_text in _BOOL_OP_TOKENS:
                     result["bool_ops"] += 1
                     result["cognitive"] += 1
@@ -173,9 +203,7 @@ def _walk_complexity(node, source: bytes, depth: int = 0) -> dict:
         for child in node.children:
             child_r = _walk_complexity(child, source, depth + 1)
             _merge(result, child_r)
-            result["callback_depth"] = max(
-                result["callback_depth"], child_r["callback_depth"] + 1
-            )
+            result["callback_depth"] = max(result["callback_depth"], child_r["callback_depth"] + 1)
         return result
 
     # Default: recurse children at same depth
@@ -192,29 +220,54 @@ def _merge(target: dict, source_r: dict):
     target["nesting"] = max(target["nesting"], source_r["nesting"])
     target["returns"] += source_r["returns"]
     target["bool_ops"] += source_r["bool_ops"]
-    target["callback_depth"] = max(
-        target["callback_depth"], source_r["callback_depth"]
-    )
+    target["callback_depth"] = max(target["callback_depth"], source_r["callback_depth"])
 
 
 # ── Halstead metrics ────────────────────────────────────────────────
 
 # Operator node types (control flow, assignments, calls, etc.)
 _OPERATOR_TYPES = {
-    "if_statement", "for_statement", "while_statement", "do_statement",
-    "switch_statement", "try_statement", "catch_clause", "return_statement",
-    "throw_statement", "raise_statement", "break_statement", "continue_statement",
-    "for_in_statement", "match_statement", "match_expression", "with_statement",
-    "conditional_expression", "ternary_expression", "assignment_expression",
-    "augmented_assignment", "call_expression", "new_expression",
-    "yield_statement", "yield",
+    "if_statement",
+    "for_statement",
+    "while_statement",
+    "do_statement",
+    "switch_statement",
+    "try_statement",
+    "catch_clause",
+    "return_statement",
+    "throw_statement",
+    "raise_statement",
+    "break_statement",
+    "continue_statement",
+    "for_in_statement",
+    "match_statement",
+    "match_expression",
+    "with_statement",
+    "conditional_expression",
+    "ternary_expression",
+    "assignment_expression",
+    "augmented_assignment",
+    "call_expression",
+    "new_expression",
+    "yield_statement",
+    "yield",
 }
 
 # Operand node types (identifiers, literals)
 _OPERAND_TYPES = {
-    "identifier", "property_identifier", "shorthand_property_identifier",
-    "number", "integer", "float", "string", "template_string",
-    "true", "false", "none", "null", "undefined",
+    "identifier",
+    "property_identifier",
+    "shorthand_property_identifier",
+    "number",
+    "integer",
+    "float",
+    "string",
+    "template_string",
+    "true",
+    "false",
+    "none",
+    "null",
+    "undefined",
 }
 
 
@@ -245,16 +298,25 @@ def _compute_halstead(func_node, source: bytes) -> dict:
             operators.add(ntype)
             total_operators += 1
         elif ntype in _OPERAND_TYPES:
-            text = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+            text = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
             operands.add(text)
             total_operands += 1
 
         # Also count non-named operator tokens (+, -, =, ==, etc.)
-        if not node.is_named and node.parent and node.parent.type in (
-            "binary_expression", "unary_expression", "assignment_expression",
-            "augmented_assignment", "comparison_operator", "boolean_operator",
+        if (
+            not node.is_named
+            and node.parent
+            and node.parent.type
+            in (
+                "binary_expression",
+                "unary_expression",
+                "assignment_expression",
+                "augmented_assignment",
+                "comparison_operator",
+                "boolean_operator",
+            )
         ):
-            op_text = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+            op_text = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
             if op_text.strip():
                 operators.add(op_text)
                 total_operators += 1
@@ -264,13 +326,13 @@ def _compute_halstead(func_node, source: bytes) -> dict:
 
     _walk(func_node)
 
-    n1 = len(operators)   # distinct operators
-    n2 = len(operands)    # distinct operands
+    n1 = len(operators)  # distinct operators
+    n2 = len(operands)  # distinct operands
     N1 = total_operators  # total operators
-    N2 = total_operands   # total operands
+    N2 = total_operands  # total operands
 
-    n = n1 + n2           # vocabulary
-    N = N1 + N2           # length
+    n = n1 + n2  # vocabulary
+    N = N1 + N2  # length
 
     if n <= 0 or n2 <= 0:
         return {"volume": 0.0, "difficulty": 0.0, "effort": 0.0, "bugs": 0.0}
@@ -305,8 +367,7 @@ def _find_function_node(tree, line_start: int, line_end: int):
 
         if node.type in _FUNCTION_NODES:
             # Allow 1-3 lines tolerance for decorators/annotations
-            if (abs(node_start - line_start) <= 3 and
-                    abs(node_end - line_end) <= 1):
+            if abs(node_start - line_start) <= 3 and abs(node_end - line_end) <= 1:
                 return node
 
         for child in node.children:
@@ -323,9 +384,7 @@ def _find_function_node(tree, line_start: int, line_end: int):
     return _search(root)
 
 
-def compute_symbol_complexity(
-    tree, source: bytes, line_start: int, line_end: int
-) -> dict:
+def compute_symbol_complexity(tree, source: bytes, line_start: int, line_end: int) -> dict:
     """Compute complexity metrics for a single symbol.
 
     Args:
@@ -372,9 +431,7 @@ def compute_symbol_complexity(
     }
 
 
-def _complexity_from_source(
-    source: bytes, line_start: int, line_end: int
-) -> dict:
+def _complexity_from_source(source: bytes, line_start: int, line_end: int) -> dict:
     """Fallback: estimate complexity from raw source when AST node not found."""
     lines = source.split(b"\n")
     start_idx = max(0, line_start - 1)
@@ -428,15 +485,22 @@ def _complexity_from_source(
 
 # Loop node types (cross-language)
 _LOOP_NODES = {
-    "for_statement", "while_statement", "do_statement",
-    "for_in_statement", "enhanced_for_statement", "foreach_statement",
+    "for_statement",
+    "while_statement",
+    "do_statement",
+    "for_in_statement",
+    "enhanced_for_statement",
+    "foreach_statement",
     "for_expression",
 }
 
 # Subscript / index access nodes
 _SUBSCRIPT_NODES = {
-    "subscript", "subscript_expression", "index_expression",
-    "element_access_expression", "bracket_access",
+    "subscript",
+    "subscript_expression",
+    "index_expression",
+    "element_access_expression",
+    "bracket_access",
 }
 
 # Comparison operator tokens
@@ -444,8 +508,23 @@ _COMPARE_OPS = {"<", ">", "<=", ">=", "==", "!=", "<>"}
 
 # Augmented assignment node types and tokens
 _AUGMENTED_ASSIGN_NODES = {"augmented_assignment"}
-_AUGMENTED_ASSIGN_OPS = {"+=", "-=", "*=", "/=", "%=", "**=", "//=",
-                         "&=", "|=", "^=", "<<=", ">>="}
+_AUGMENTED_ASSIGN_OPS = {"+=", "-=", "*=", "/=", "%=", "**=", "//=", "&=", "|=", "^=", "<<=", ">>="}
+
+# Math/operator tokens used by algorithm detectors
+_MULTIPLY_OPS = {"*", "*="}
+_MODULO_OPS = {"%", "%="}
+
+# Calls that indicate repeated linear scans when invoked on an invariant
+# receiver with loop-varying arguments (e.g. blacklist.contains(item)).
+_LOOP_LOOKUP_CALLS = {
+    "index",
+    "indexOf",
+    "lastIndexOf",
+    "contains",
+    "includes",
+    "Contains",
+    "IndexOf",
+}
 
 
 def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
@@ -456,13 +535,18 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
     max_loop_depth = 0
     has_nested = False
     calls_in_loops: list[str] = []
+    calls_in_loops_qualified: list[str] = []
     subscript_in_loops = False
     has_self_call = False
     self_call_count = 0
     loop_with_compare = False
     loop_with_accumulator = False
+    loop_with_multiplication = False
+    loop_with_modulo = False
     str_concat_in_loop = False
     loop_invariant_calls: list[str] = []
+    loop_lookup_calls: list[str] = []
+    front_ops_in_loop = False
     loop_bound_small = False
 
     symbol_lower = symbol_name.lower() if symbol_name else ""
@@ -476,7 +560,9 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
         nonlocal max_loop_depth, has_nested, subscript_in_loops
         nonlocal has_self_call, self_call_count
         nonlocal loop_with_compare, loop_with_accumulator
-        nonlocal str_concat_in_loop, loop_bound_small
+        nonlocal loop_with_multiplication, loop_with_modulo
+        nonlocal str_concat_in_loop, front_ops_in_loop
+        nonlocal loop_bound_small
 
         ntype = node.type
 
@@ -501,14 +587,28 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             # Call expressions inside loops
             if ntype in ("call_expression", "call"):
                 name = _call_target_name(node, source)
+                qualified = _call_target_qualified(node, source)
                 if name:
                     calls_in_loops.append(name)
                     if symbol_lower and name.lower() == symbol_lower:
                         has_self_call = True
                         self_call_count += 1
-                    # Check if call is loop-invariant (args don't use loop vars)
-                    if loop_vars and not _call_uses_loop_vars(node, source, loop_vars):
-                        loop_invariant_calls.append(name)
+                if qualified:
+                    calls_in_loops_qualified.append(qualified)
+                if name:
+                    receiver_uses_loop = _call_receiver_uses_loop_vars(node, source, loop_vars)
+                    args_use_loop = _call_args_use_loop_vars(node, source, loop_vars)
+                    # Check if call is loop-invariant (args and receiver do not
+                    # depend on loop variables).
+                    if loop_vars and not (receiver_uses_loop or args_use_loop):
+                        loop_invariant_calls.append(qualified or name)
+                    # Lookup anti-pattern: linear scan on an invariant receiver
+                    # with loop-varying arguments.
+                    if name in _LOOP_LOOKUP_CALLS and loop_vars and not receiver_uses_loop and args_use_loop:
+                        loop_lookup_calls.append(qualified or name)
+                    # Front insertion/removal anti-pattern.
+                    if _is_front_operation_call(node, source, name):
+                        front_ops_in_loop = True
 
             # Subscript access inside loops
             if ntype in _SUBSCRIPT_NODES:
@@ -518,28 +618,39 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             if ntype in ("binary_expression", "comparison_operator"):
                 for child in node.children:
                     if not child.is_named:
-                        op = source[child.start_byte:child.end_byte].decode(
-                            "utf-8", errors="replace")
+                        op = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
                         if op in _COMPARE_OPS:
                             loop_with_compare = True
-                            break
+                        if op in _MULTIPLY_OPS:
+                            loop_with_multiplication = True
+                        if op in _MODULO_OPS:
+                            loop_with_modulo = True
 
             # Augmented assignment inside loops
             if ntype in _AUGMENTED_ASSIGN_NODES:
                 loop_with_accumulator = True
+                for child in node.children:
+                    if child.is_named:
+                        continue
+                    op = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
+                    if op in _MULTIPLY_OPS:
+                        loop_with_multiplication = True
+                    if op in _MODULO_OPS:
+                        loop_with_modulo = True
                 # Check for string concatenation: str_var += ...
                 target = _augmented_assign_target(node, source)
                 if target and target in string_vars:
                     str_concat_in_loop = True
-            elif ntype in ("binary_expression", "assignment_expression",
-                           "expression_statement"):
+            elif ntype in ("binary_expression", "assignment_expression", "expression_statement"):
                 for child in node.children:
                     if not child.is_named:
-                        op = source[child.start_byte:child.end_byte].decode(
-                            "utf-8", errors="replace")
+                        op = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
                         if op in _AUGMENTED_ASSIGN_OPS:
                             loop_with_accumulator = True
-                            break
+                        if op in _MULTIPLY_OPS:
+                            loop_with_multiplication = True
+                        if op in _MODULO_OPS:
+                            loop_with_modulo = True
 
         # --- Self-call detection outside loops too ---
         if loop_depth == 0 and ntype in ("call_expression", "call"):
@@ -562,6 +673,13 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             seen.add(c)
             unique_calls.append(c)
 
+    seen_q: set[str] = set()
+    unique_calls_qualified: list[str] = []
+    for c in calls_in_loops_qualified:
+        if c not in seen_q:
+            seen_q.add(c)
+            unique_calls_qualified.append(c)
+
     # Deduplicate loop-invariant calls
     seen_inv: set[str] = set()
     unique_inv: list[str] = []
@@ -570,17 +688,29 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             seen_inv.add(c)
             unique_inv.append(c)
 
+    seen_lookup: set[str] = set()
+    unique_lookup: list[str] = []
+    for c in loop_lookup_calls:
+        if c not in seen_lookup:
+            seen_lookup.add(c)
+            unique_lookup.append(c)
+
     return {
         "loop_depth": max_loop_depth,
         "has_nested_loops": int(has_nested),
         "calls_in_loops": unique_calls,
+        "calls_in_loops_qualified": unique_calls_qualified,
         "subscript_in_loops": int(subscript_in_loops),
         "has_self_call": int(has_self_call),
         "self_call_count": self_call_count,
         "loop_with_compare": int(loop_with_compare),
         "loop_with_accumulator": int(loop_with_accumulator),
+        "loop_with_multiplication": int(loop_with_multiplication),
+        "loop_with_modulo": int(loop_with_modulo),
         "str_concat_in_loop": int(str_concat_in_loop),
         "loop_invariant_calls": unique_inv,
+        "loop_lookup_calls": unique_lookup,
+        "front_ops_in_loop": int(front_ops_in_loop),
         "loop_bound_small": int(loop_bound_small),
     }
 
@@ -589,16 +719,64 @@ def _call_target_name(node, src: bytes) -> str:
     """Best-effort extraction of the call target identifier."""
     for child in node.children:
         if child.type == "identifier":
-            return src[child.start_byte:child.end_byte].decode(
-                "utf-8", errors="replace")
-        if child.type in ("member_expression", "attribute",
-                          "field_expression"):
+            return src[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
+        if child.type in ("member_expression", "attribute", "field_expression"):
             # Take the last identifier (e.g. obj.method -> method)
             for sub in reversed(child.children):
-                if sub.type in ("identifier", "property_identifier",
-                                "field_identifier"):
-                    return src[sub.start_byte:sub.end_byte].decode(
-                        "utf-8", errors="replace")
+                if sub.type in ("identifier", "property_identifier", "field_identifier"):
+                    return src[sub.start_byte : sub.end_byte].decode("utf-8", errors="replace")
+    return ""
+
+
+def _call_target_qualified(node, src: bytes) -> str:
+    """Best-effort extraction of the call target with receiver path.
+
+    Examples:
+    - ``requests.get(...)`` -> ``requests.get``
+    - ``session.execute(...)`` -> ``session.execute``
+    - ``query(...)`` -> ``query``
+    """
+    callee = _call_callee_node(node)
+    if callee is None:
+        return ""
+    return _qualified_name(callee, src)
+
+
+def _call_callee_node(call_node):
+    """Return the callable node for a call expression."""
+    for child in call_node.children:
+        if child.type in ("argument_list", "arguments", "template_string"):
+            break
+        if child.is_named:
+            return child
+    return None
+
+
+def _qualified_name(node, src: bytes) -> str:
+    """Extract a dotted qualified name from an AST node when possible."""
+    ident_types = {
+        "identifier",
+        "property_identifier",
+        "field_identifier",
+        "type_identifier",
+    }
+    member_types = {"member_expression", "attribute", "field_expression"}
+    if node.type in ident_types:
+        return src[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+    if node.type in member_types:
+        named = [c for c in node.children if c.is_named]
+        if len(named) >= 2:
+            left = _qualified_name(named[0], src)
+            right = _qualified_name(named[-1], src)
+            if left and right:
+                return f"{left}.{right}"
+            return right or left
+        if named:
+            return _qualified_name(named[-1], src)
+    # Fallback: choose the last identifier-like child.
+    for child in reversed(node.children):
+        if child.type in ident_types:
+            return src[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
     return ""
 
 
@@ -643,7 +821,7 @@ def _check_string_assign(assign_node, source: bytes, string_vars: set[str]):
     if lhs.type != "identifier":
         return
 
-    var_name = source[lhs.start_byte:lhs.end_byte].decode("utf-8", errors="replace")
+    var_name = source[lhs.start_byte : lhs.end_byte].decode("utf-8", errors="replace")
 
     # Check RHS for string patterns
     if rhs.type in ("string", "concatenated_string", "template_string"):
@@ -659,8 +837,7 @@ def _augmented_assign_target(node, source: bytes) -> str:
     """Extract the target variable name from an augmented assignment node."""
     for child in node.children:
         if child.type == "identifier":
-            return source[child.start_byte:child.end_byte].decode(
-                "utf-8", errors="replace")
+            return source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
     return ""
 
 
@@ -670,22 +847,19 @@ def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
     for child in loop_node.children:
         # Python: for x in ..., Go: for i, v := range ...
         if child.type in ("identifier",):
-            result.add(source[child.start_byte:child.end_byte].decode(
-                "utf-8", errors="replace"))
+            result.add(source[child.start_byte : child.end_byte].decode("utf-8", errors="replace"))
         # Python pattern_list / tuple: for x, y in ...
         elif child.type in ("pattern_list", "tuple_pattern", "pair"):
             for sub in child.children:
                 if sub.type == "identifier":
-                    result.add(source[sub.start_byte:sub.end_byte].decode(
-                        "utf-8", errors="replace"))
+                    result.add(source[sub.start_byte : sub.end_byte].decode("utf-8", errors="replace"))
         # JS: for (const x of ...) / for (let x in ...)
         elif child.type in ("variable_declaration", "lexical_declaration"):
             for sub in child.children:
                 if sub.type == "variable_declarator":
                     for ssub in sub.children:
                         if ssub.type == "identifier":
-                            result.add(source[ssub.start_byte:ssub.end_byte].decode(
-                                "utf-8", errors="replace"))
+                            result.add(source[ssub.start_byte : ssub.end_byte].decode("utf-8", errors="replace"))
         # Stop at the body — we only want the loop header vars
         if child.type in ("block", "statement_block", "compound_statement"):
             break
@@ -700,41 +874,90 @@ def _call_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
     loop-dependent even if the argument list is empty or constant.
     """
 
-    def _has_loop_var(node) -> bool:
-        if node.type == "identifier":
-            name = source[node.start_byte:node.end_byte].decode(
-                "utf-8", errors="replace")
-            if name in loop_vars:
-                return True
-        for child in node.children:
-            if _has_loop_var(child):
-                return True
+    if _call_receiver_uses_loop_vars(call_node, source, loop_vars):
+        return True
+    return _call_args_use_loop_vars(call_node, source, loop_vars)
+
+
+def _node_has_loop_var(node, source: bytes, loop_vars: set[str]) -> bool:
+    """Return True when ``node`` references any variable from ``loop_vars``."""
+    if node.type == "identifier":
+        name = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+        if name in loop_vars:
+            return True
+    for child in node.children:
+        if _node_has_loop_var(child, source, loop_vars):
+            return True
+    return False
+
+
+def _call_receiver_node(call_node):
+    """Return the receiver object node in ``receiver.method(...)`` calls."""
+    for child in call_node.children:
+        if child.type in ("member_expression", "attribute", "field_expression"):
+            named = [c for c in child.children if c.is_named]
+            if len(named) >= 2:
+                return named[0]
+    return None
+
+
+def _call_args_node(call_node):
+    """Return the argument list node for a call expression."""
+    for child in call_node.children:
+        if child.type in ("argument_list", "arguments"):
+            return child
+    return None
+
+
+def _call_receiver_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
+    recv = _call_receiver_node(call_node)
+    if recv is None:
         return False
+    return _node_has_loop_var(recv, source, loop_vars)
 
-    # Check the call receiver (object before .method())
-    for child in call_node.children:
-        if child.type in ("member_expression", "attribute",
-                          "field_expression"):
-            # Check the object part (everything except the method name)
-            for sub in child.children:
-                if sub.type not in ("identifier", "property_identifier",
-                                    "field_identifier", "."):
-                    if _has_loop_var(sub):
-                        return True
-            # Also check if the direct object identifier is a loop var
-            for sub in child.children:
-                if sub.type == "identifier":
-                    name = source[sub.start_byte:sub.end_byte].decode(
-                        "utf-8", errors="replace")
-                    if name in loop_vars:
-                        return True
-                break  # only check the first identifier (the object)
 
-    # Check argument list
-    for child in call_node.children:
-        if child.type in ("argument_list", "arguments", "template_string"):
-            if _has_loop_var(child):
-                return True
+def _call_args_use_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
+    args = _call_args_node(call_node)
+    if args is None:
+        return False
+    return _node_has_loop_var(args, source, loop_vars)
+
+
+def _call_arg_texts(call_node, source: bytes) -> list[str]:
+    """Return argument source snippets for a call expression."""
+    args = _call_args_node(call_node)
+    if args is None:
+        return []
+    out: list[str] = []
+    for child in args.children:
+        if child.is_named:
+            out.append(source[child.start_byte : child.end_byte].decode("utf-8", errors="replace").strip())
+    return out
+
+
+def _is_zero_literal(text: str) -> bool:
+    t = text.strip().lower()
+    return t in {"0", "0u", "0l", "0ul", "0.0", "0.0f", "0.0d"}
+
+
+def _is_front_operation_call(call_node, source: bytes, call_name: str) -> bool:
+    """Detect front-insert/front-remove operations used inside loops."""
+    # JS/Ruby/PHP-style dedicated front operations.
+    if call_name in {"unshift", "shift", "appendleft", "popleft"}:
+        return True
+
+    arg_texts = _call_arg_texts(call_node, source)
+
+    # Python/Java/C#: insert(0, x), add(0, x), pop(0), removeAt(0)
+    if call_name in {"insert", "add", "Insert", "Add", "pop", "removeAt", "RemoveAt"}:
+        if arg_texts and _is_zero_literal(arg_texts[0]):
+            return True
+
+    # C++ vector::erase(begin())-style front removal.
+    if call_name in {"erase", "Erase"} and arg_texts:
+        first = arg_texts[0].replace(" ", "")
+        if first.startswith("begin(") or first.endswith(".begin()"):
+            return True
 
     return False
 
@@ -755,8 +978,7 @@ def _is_bounded_loop(loop_node, source: bytes) -> bool:
                         for arg in sub.children:
                             if arg.type in ("integer", "number"):
                                 try:
-                                    val = int(source[arg.start_byte:arg.end_byte].decode(
-                                        "utf-8", errors="replace"))
+                                    val = int(source[arg.start_byte : arg.end_byte].decode("utf-8", errors="replace"))
                                     if val < 100:
                                         return True
                                 except (ValueError, OverflowError):
@@ -772,6 +994,7 @@ def _is_bounded_loop(loop_node, source: bytes) -> bool:
 
 # ── Batch computation + storage ──────────────────────────────────────
 
+
 def compute_and_store(
     conn: sqlite3.Connection,
     file_id: int,
@@ -785,8 +1008,13 @@ def compute_and_store(
     'constructor', 'property') — classes/modules are skipped.
     """
     CALLABLE_KINDS = (
-        "function", "method", "generator", "constructor",
-        "property", "closure", "lambda",
+        "function",
+        "method",
+        "generator",
+        "constructor",
+        "property",
+        "closure",
+        "lambda",
     )
 
     rows = conn.execute(
@@ -809,41 +1037,51 @@ def compute_and_store(
         if metrics is None:
             continue
 
-        metrics_batch.append((
-            row["id"],
-            metrics["cognitive_complexity"],
-            metrics["nesting_depth"],
-            metrics["param_count"],
-            metrics["line_count"],
-            metrics["return_count"],
-            metrics["bool_op_count"],
-            metrics["callback_depth"],
-            metrics.get("cyclomatic_density", 0.0),
-            metrics.get("halstead_volume", 0.0),
-            metrics.get("halstead_difficulty", 0.0),
-            metrics.get("halstead_effort", 0.0),
-            metrics.get("halstead_bugs", 0.0),
-        ))
+        metrics_batch.append(
+            (
+                row["id"],
+                metrics["cognitive_complexity"],
+                metrics["nesting_depth"],
+                metrics["param_count"],
+                metrics["line_count"],
+                metrics["return_count"],
+                metrics["bool_op_count"],
+                metrics["callback_depth"],
+                metrics.get("cyclomatic_density", 0.0),
+                metrics.get("halstead_volume", 0.0),
+                metrics.get("halstead_difficulty", 0.0),
+                metrics.get("halstead_effort", 0.0),
+                metrics.get("halstead_bugs", 0.0),
+            )
+        )
 
         # Extract math signals from same AST node
         func_node = _find_function_node(tree, ls, le)
         if func_node is not None:
             import json as _json_mod
+
             msig = _extract_math_signals(func_node, source, row["name"])
-            math_batch.append((
-                row["id"],
-                msig["loop_depth"],
-                msig["has_nested_loops"],
-                _json_mod.dumps(msig["calls_in_loops"]),
-                msig["subscript_in_loops"],
-                msig["has_self_call"],
-                msig["loop_with_compare"],
-                msig["loop_with_accumulator"],
-                msig["self_call_count"],
-                msig["str_concat_in_loop"],
-                _json_mod.dumps(msig["loop_invariant_calls"]),
-                msig["loop_bound_small"],
-            ))
+            math_batch.append(
+                (
+                    row["id"],
+                    msig["loop_depth"],
+                    msig["has_nested_loops"],
+                    _json_mod.dumps(msig["calls_in_loops"]),
+                    _json_mod.dumps(msig["calls_in_loops_qualified"]),
+                    msig["subscript_in_loops"],
+                    msig["has_self_call"],
+                    msig["loop_with_compare"],
+                    msig["loop_with_accumulator"],
+                    msig["loop_with_multiplication"],
+                    msig["loop_with_modulo"],
+                    msig["self_call_count"],
+                    msig["str_concat_in_loop"],
+                    _json_mod.dumps(msig["loop_invariant_calls"]),
+                    _json_mod.dumps(msig["loop_lookup_calls"]),
+                    msig["front_ops_in_loop"],
+                    msig["loop_bound_small"],
+                )
+            )
 
     if metrics_batch:
         conn.executemany(
@@ -860,9 +1098,11 @@ def compute_and_store(
         conn.executemany(
             """INSERT OR REPLACE INTO math_signals
                (symbol_id, loop_depth, has_nested_loops, calls_in_loops,
-                subscript_in_loops, has_self_call, loop_with_compare,
-                loop_with_accumulator, self_call_count, str_concat_in_loop,
-                loop_invariant_calls, loop_bound_small)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                calls_in_loops_qualified, subscript_in_loops, has_self_call,
+                loop_with_compare, loop_with_accumulator,
+                loop_with_multiplication, loop_with_modulo, self_call_count,
+                str_concat_in_loop, loop_invariant_calls, loop_lookup_calls,
+                front_ops_in_loop, loop_bound_small)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             math_batch,
         )

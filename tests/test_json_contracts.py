@@ -18,25 +18,64 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
-
-from roam.cli import cli
-
+from conftest import assert_json_envelope, invoke_cli
 
 # ============================================================================
 # Commands that support --json output
 # ============================================================================
 
 COMMANDS_WITH_JSON = [
-    "health", "map", "dead", "weather", "clusters", "layers",
-    "search", "grep", "file", "symbol", "deps", "uses", "fan",
-    "impact", "coupling", "diff", "context", "safe-delete",
-    "pr-risk", "split", "risk", "why", "trend", "coverage-gaps",
-    "report", "complexity", "debt", "conventions", "bus-factor",
-    "entry-points", "breaking", "safe-zones", "doc-staleness",
-    "fn-coupling", "alerts", "fitness", "patterns", "preflight",
-    "snapshot", "describe", "trace", "owner", "sketch",
-    "affected-tests", "diagnose", "test-map", "module",
+    "health",
+    "map",
+    "dead",
+    "weather",
+    "clusters",
+    "layers",
+    "search",
+    "grep",
+    "file",
+    "symbol",
+    "deps",
+    "uses",
+    "fan",
+    "impact",
+    "coupling",
+    "diff",
+    "context",
+    "safe-delete",
+    "pr-risk",
+    "split",
+    "risk",
+    "why",
+    "trend",
+    "coverage-gaps",
+    "report",
+    "complexity",
+    "debt",
+    "conventions",
+    "bus-factor",
+    "entry-points",
+    "breaking",
+    "safe-zones",
+    "doc-staleness",
+    "docs-coverage",
+    "fn-coupling",
+    "alerts",
+    "fitness",
+    "patterns",
+    "preflight",
+    "guard",
+    "agent-plan",
+    "agent-context",
+    "snapshot",
+    "describe",
+    "trace",
+    "owner",
+    "sketch",
+    "affected-tests",
+    "diagnose",
+    "test-map",
+    "module",
 ]
 
 # Commands that require extra arguments to run.
@@ -55,6 +94,9 @@ COMMAND_ARGS = {
     "split": ["src/models.py"],
     "why": ["User"],
     "preflight": ["User"],
+    "guard": ["User"],
+    "agent-plan": ["--agents", "2"],
+    "agent-context": ["--agent-id", "1", "--agents", "2"],
     "owner": ["src/models.py"],
     "diagnose": ["User"],
     "affected-tests": ["--staged"],
@@ -69,40 +111,42 @@ COMMAND_ARGS = {
 # (e.g. need real git history, multiple snapshots, test files, etc.)
 # These are marked xfail(strict=False) so they don't block the suite.
 FRAGILE_COMMANDS = {
-    "affected-tests",   # needs staged changes or a target with test coverage
-    "trace",            # needs two connected symbols found by exact name
-    "trend",            # needs multiple snapshots
-    "diff",             # needs uncommitted changes
-    "pr-risk",          # needs uncommitted changes or PR context
-    "snapshot",         # snapshot creation may vary
-    "coverage-gaps",    # needs test file mapping
-    "doc-staleness",    # needs docstrings with stale references
-    "breaking",         # needs public API changes
-    "deps",             # symbol resolution may fail in minimal project
-    "uses",             # symbol resolution may fail in minimal project
-    "fan",              # symbol resolution may fail in minimal project
-    "impact",           # symbol resolution may fail in minimal project
-    "context",          # symbol resolution may fail in minimal project
-    "safe-delete",      # symbol resolution may fail in minimal project
-    "why",              # symbol resolution may fail in minimal project
-    "preflight",        # symbol resolution may fail in minimal project
-    "diagnose",         # symbol resolution may fail in minimal project
-    "sketch",           # may need specific project structure
-    "symbol",           # symbol resolution may fail in minimal project
-    "report",           # may need specific report config or flags
-    "owner",            # file may not be in index
-    "describe",         # may need specific project structure
-    "test-map",         # needs test files
-    "fitness",          # may need specific project conditions
-    "safe-zones",       # needs a valid file/module target
-    "test-map",         # needs test file mapping
-    "module",           # needs module-level analysis
+    "affected-tests",  # needs staged changes or a target with test coverage
+    "trace",  # needs two connected symbols found by exact name
+    "trend",  # needs multiple snapshots
+    "diff",  # needs uncommitted changes
+    "pr-risk",  # needs uncommitted changes or PR context
+    "snapshot",  # snapshot creation may vary
+    "coverage-gaps",  # needs test file mapping
+    "doc-staleness",  # needs docstrings with stale references
+    "breaking",  # needs public API changes
+    "deps",  # symbol resolution may fail in minimal project
+    "uses",  # symbol resolution may fail in minimal project
+    "fan",  # symbol resolution may fail in minimal project
+    "impact",  # symbol resolution may fail in minimal project
+    "context",  # symbol resolution may fail in minimal project
+    "safe-delete",  # symbol resolution may fail in minimal project
+    "why",  # symbol resolution may fail in minimal project
+    "preflight",  # symbol resolution may fail in minimal project
+    "guard",  # symbol resolution may fail in minimal project
+    "diagnose",  # symbol resolution may fail in minimal project
+    "sketch",  # may need specific project structure
+    "symbol",  # symbol resolution may fail in minimal project
+    "report",  # may need specific report config or flags
+    "owner",  # file may not be in index
+    "describe",  # may need specific project structure
+    "test-map",  # needs test files
+    "fitness",  # may need specific project conditions
+    "safe-zones",  # needs a valid file/module target
+    "test-map",  # needs test file mapping
+    "module",  # needs module-level analysis
 }
 
 
 # ============================================================================
 # Helpers
 # ============================================================================
+
 
 def _build_args(cmd: str) -> list[str]:
     """Return the full argument list for a command invocation."""
@@ -125,16 +169,19 @@ def _invoke_json(cli_runner, indexed_project, cmd: str):
 # Fixtures
 # ============================================================================
 
+
 @pytest.fixture(scope="module")
 def cli_runner():
     """Module-scoped CliRunner for efficiency."""
     from click.testing import CliRunner
+
     return CliRunner()
 
 
 # ============================================================================
 # 1. Core envelope contract (parametrized over all commands)
 # ============================================================================
+
 
 @pytest.mark.parametrize("cmd", COMMANDS_WITH_JSON)
 def test_json_envelope_contract(cmd, cli_runner, indexed_project):
@@ -145,9 +192,7 @@ def test_json_envelope_contract(cmd, cli_runner, indexed_project):
     result = _invoke_json(cli_runner, indexed_project, cmd)
 
     # Must exit cleanly
-    assert result.exit_code == 0, (
-        f"'{cmd}' exited with code {result.exit_code}:\n{result.output[:500]}"
-    )
+    assert result.exit_code == 0, f"'{cmd}' exited with code {result.exit_code}:\n{result.output[:500]}"
 
     # Must be valid JSON
     data = json.loads(result.output)
@@ -160,6 +205,7 @@ def test_json_envelope_contract(cmd, cli_runner, indexed_project):
 # 2. Envelope field: "command" matches the invoked command name
 # ============================================================================
 
+
 @pytest.mark.parametrize("cmd", COMMANDS_WITH_JSON)
 def test_envelope_has_command_field(cmd, cli_runner, indexed_project):
     """data['command'] must match the invoked command name."""
@@ -171,17 +217,15 @@ def test_envelope_has_command_field(cmd, cli_runner, indexed_project):
         pytest.skip(f"{cmd} failed (exit {result.exit_code}), skipping field check")
 
     data = json.loads(result.output)
-    assert data.get("command") == cmd, (
-        f"Expected command='{cmd}', got '{data.get('command')}'"
-    )
+    assert data.get("command") == cmd, f"Expected command='{cmd}', got '{data.get('command')}'"
 
 
 # ============================================================================
 # 3. Envelope field: "version" is a non-empty string
 # ============================================================================
 
-@pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "search",
-                                  "report", "complexity", "debt"])
+
+@pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "search", "report", "complexity", "debt"])
 def test_envelope_has_version(cmd, cli_runner, indexed_project):
     """data['version'] must be a non-empty string."""
     args = _build_args(cmd)
@@ -199,17 +243,18 @@ def test_envelope_has_version(cmd, cli_runner, indexed_project):
 # 4. Envelope field: "timestamp" is ISO 8601 format
 # ============================================================================
 
-@pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "search",
-                                  "report", "complexity", "debt"])
+
+@pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "search", "report", "complexity", "debt"])
 def test_envelope_has_timestamp(cmd, cli_runner, indexed_project):
-    """data['timestamp'] must be a valid ISO 8601 timestamp."""
+    """data['_meta']['timestamp'] must be a valid ISO 8601 timestamp."""
     args = _build_args(cmd)
     result = invoke_cli(cli_runner, args, cwd=indexed_project, json_mode=True)
     if result.exit_code != 0:
         pytest.skip(f"{cmd} failed, skipping timestamp check")
 
     data = json.loads(result.output)
-    ts = data.get("timestamp")
+    meta = data.get("_meta", {})
+    ts = meta.get("timestamp") or data.get("timestamp")
     assert isinstance(ts, str), f"timestamp should be str, got {type(ts)}"
     assert len(ts) > 0, "timestamp should be non-empty"
 
@@ -227,6 +272,7 @@ def test_envelope_has_timestamp(cmd, cli_runner, indexed_project):
 # 5. Envelope field: "summary" is always a dict
 # ============================================================================
 
+
 @pytest.mark.parametrize("cmd", COMMANDS_WITH_JSON)
 def test_envelope_summary_is_dict(cmd, cli_runner, indexed_project):
     """data['summary'] must always be a dict (possibly empty)."""
@@ -239,14 +285,13 @@ def test_envelope_summary_is_dict(cmd, cli_runner, indexed_project):
 
     data = json.loads(result.output)
     summary = data.get("summary")
-    assert isinstance(summary, dict), (
-        f"summary should be dict for '{cmd}', got {type(summary)}: {summary!r}"
-    )
+    assert isinstance(summary, dict), f"summary should be dict for '{cmd}', got {type(summary)}: {summary!r}"
 
 
 # ============================================================================
 # 6. Raw output is valid JSON (not mixed with text)
 # ============================================================================
+
 
 @pytest.mark.parametrize("cmd", COMMANDS_WITH_JSON)
 def test_json_is_valid_json(cmd, cli_runner, indexed_project):
@@ -264,10 +309,7 @@ def test_json_is_valid_json(cmd, cli_runner, indexed_project):
     try:
         data = json.loads(output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"'{cmd}' output is not valid JSON: {e}\n"
-            f"First 300 chars: {output[:300]}"
-        )
+        pytest.fail(f"'{cmd}' output is not valid JSON: {e}\nFirst 300 chars: {output[:300]}")
 
     assert isinstance(data, dict), f"Top-level JSON should be dict, got {type(data)}"
 
@@ -276,8 +318,8 @@ def test_json_is_valid_json(cmd, cli_runner, indexed_project):
 # 7. --compact mode strips version/timestamp
 # ============================================================================
 
-@pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "report",
-                                  "complexity", "debt"])
+
+@pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "report", "complexity", "debt"])
 def test_compact_json(cmd, cli_runner, indexed_project):
     """--json --compact should produce valid JSON, possibly without version/timestamp.
 
@@ -303,10 +345,7 @@ def test_compact_json(cmd, cli_runner, indexed_project):
     try:
         data = json.loads(output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"'{cmd}' --compact output is not valid JSON: {e}\n"
-            f"First 300 chars: {output[:300]}"
-        )
+        pytest.fail(f"'{cmd}' --compact output is not valid JSON: {e}\nFirst 300 chars: {output[:300]}")
 
     assert isinstance(data, dict), "Compact JSON should still be a dict"
     # command key should always be present even in compact mode
@@ -318,8 +357,15 @@ def test_compact_json(cmd, cli_runner, indexed_project):
 # ============================================================================
 
 COMMANDS_WITH_VERDICT = [
-    "health", "dead", "weather", "risk", "complexity", "debt",
-    "conventions", "fitness", "alerts",
+    "health",
+    "dead",
+    "weather",
+    "risk",
+    "complexity",
+    "debt",
+    "conventions",
+    "fitness",
+    "alerts",
 ]
 
 
@@ -337,13 +383,8 @@ def test_summary_has_verdict(cmd, cli_runner, indexed_project):
         pytest.skip(f"{cmd} produced non-JSON output")
     summary = data.get("summary", {})
     if "verdict" not in summary:
-        pytest.xfail(
-            f"'{cmd}' summary does not contain 'verdict' yet, "
-            f"got keys: {list(summary.keys())}"
-        )
-    assert isinstance(summary["verdict"], str), (
-        f"verdict should be str, got {type(summary['verdict'])}"
-    )
+        pytest.xfail(f"'{cmd}' summary does not contain 'verdict' yet, got keys: {list(summary.keys())}")
+    assert isinstance(summary["verdict"], str), f"verdict should be str, got {type(summary['verdict'])}"
     assert len(summary["verdict"]) > 0, "verdict should be non-empty"
 
 
@@ -351,19 +392,19 @@ def test_summary_has_verdict(cmd, cli_runner, indexed_project):
 # 9. Envelope field: "index_age_s" is int or None
 # ============================================================================
 
+
 @pytest.mark.parametrize("cmd", ["health", "map", "dead", "report"])
 def test_envelope_index_age(cmd, cli_runner, indexed_project):
-    """data['index_age_s'] should be an int (seconds) or None."""
+    """data['_meta']['index_age_s'] should be an int (seconds) or None."""
     args = _build_args(cmd)
     result = invoke_cli(cli_runner, args, cwd=indexed_project, json_mode=True)
     if result.exit_code != 0:
         pytest.skip(f"{cmd} failed")
 
     data = json.loads(result.output)
-    age = data.get("index_age_s")
-    assert age is None or isinstance(age, (int, float)), (
-        f"index_age_s should be int/float/None, got {type(age)}"
-    )
+    meta = data.get("_meta", {})
+    age = meta.get("index_age_s") if meta else data.get("index_age_s")
+    assert age is None or isinstance(age, (int, float)), f"index_age_s should be int/float/None, got {type(age)}"
     if age is not None:
         assert age >= 0, f"index_age_s should be non-negative, got {age}"
 
@@ -371,6 +412,7 @@ def test_envelope_index_age(cmd, cli_runner, indexed_project):
 # ============================================================================
 # 10. Envelope field: "project" is a string
 # ============================================================================
+
 
 @pytest.mark.parametrize("cmd", ["health", "map", "dead", "report"])
 def test_envelope_project_field(cmd, cli_runner, indexed_project):
@@ -382,14 +424,13 @@ def test_envelope_project_field(cmd, cli_runner, indexed_project):
 
     data = json.loads(result.output)
     project = data.get("project")
-    assert isinstance(project, str), (
-        f"project should be str, got {type(project)}"
-    )
+    assert isinstance(project, str), f"project should be str, got {type(project)}"
 
 
 # ============================================================================
 # 11. Non-JSON mode should NOT produce JSON
 # ============================================================================
+
 
 @pytest.mark.parametrize("cmd", ["health", "dead", "weather"])
 def test_non_json_mode_is_text(cmd, cli_runner, indexed_project):
@@ -416,6 +457,7 @@ def test_non_json_mode_is_text(cmd, cli_runner, indexed_project):
 # 12. Envelope is a flat dict at top level (no nesting of envelope keys)
 # ============================================================================
 
+
 @pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "report"])
 def test_envelope_top_level_keys(cmd, cli_runner, indexed_project):
     """The envelope should have standard top-level keys directly on the dict."""
@@ -426,10 +468,10 @@ def test_envelope_top_level_keys(cmd, cli_runner, indexed_project):
 
     data = json.loads(result.output)
 
-    required_keys = {"command", "version", "timestamp", "summary"}
+    required_keys = {"command", "version", "summary"}
     actual_keys = set(data.keys())
     missing = required_keys - actual_keys
-    assert not missing, (
-        f"'{cmd}' envelope missing required keys: {missing}. "
-        f"Got: {sorted(actual_keys)}"
-    )
+    assert not missing, f"'{cmd}' envelope missing required keys: {missing}. Got: {sorted(actual_keys)}"
+    # timestamp moved to _meta for deterministic output (LLM cache compat)
+    meta = data.get("_meta", {})
+    assert "timestamp" in meta or "timestamp" in data, f"'{cmd}' envelope missing timestamp in _meta or top-level"

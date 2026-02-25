@@ -13,14 +13,14 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 from roam.cli import cli
-
 
 # ---------------------------------------------------------------------------
 # Override cli_runner fixture to handle Click 8.2+ (mix_stderr removed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -34,6 +34,7 @@ def cli_runner():
 # ============================================================================
 # dead command
 # ============================================================================
+
 
 class TestDead:
     """Tests for `roam dead` -- unreferenced exports."""
@@ -51,7 +52,7 @@ class TestDead:
 
     def test_dead_json_has_confidence_arrays(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["dead"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["--detail", "dead"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "dead")
         assert "high_confidence" in data
         assert "low_confidence" in data
@@ -63,6 +64,13 @@ class TestDead:
         summary = data.get("summary", {})
         for key in ["safe", "review", "intentional"]:
             assert key in summary, f"Missing '{key}' in dead summary: {summary}"
+
+    def test_dead_json_summary_has_unused_assignments(self, cli_runner, indexed_project, monkeypatch):
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(cli_runner, ["dead"], cwd=indexed_project, json_mode=True)
+        data = parse_json_output(result, "dead")
+        summary = data.get("summary", {})
+        assert "unused_assignments" in summary
 
     def test_dead_all_flag(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
@@ -100,6 +108,7 @@ class TestDead:
 # ============================================================================
 # safe-delete command
 # ============================================================================
+
 
 class TestSafeDelete:
     """Tests for `roam safe-delete` -- check if symbol can be safely removed."""
@@ -141,6 +150,7 @@ class TestSafeDelete:
 # split command
 # ============================================================================
 
+
 class TestSplit:
     """Tests for `roam split` -- suggest file decomposition."""
 
@@ -173,14 +183,20 @@ class TestSplit:
         result = invoke_cli(cli_runner, ["split", "src/models.py"], cwd=indexed_project)
         assert result.exit_code == 0
         out = result.output
-        assert ("split" in out.lower() or "group" in out.lower() or
-                "cluster" in out.lower() or "already" in out.lower() or
-                "symbol" in out.lower() or "few" in out.lower())
+        assert (
+            "split" in out.lower()
+            or "group" in out.lower()
+            or "cluster" in out.lower()
+            or "already" in out.lower()
+            or "symbol" in out.lower()
+            or "few" in out.lower()
+        )
 
 
 # ============================================================================
 # conventions command
 # ============================================================================
+
 
 class TestConventions:
     """Tests for `roam conventions` -- naming/style conventions."""
@@ -208,18 +224,24 @@ class TestConventions:
         result = invoke_cli(cli_runner, ["conventions"], cwd=indexed_project)
         assert result.exit_code == 0
         out = result.output
-        assert ("convention" in out.lower() or "naming" in out.lower() or
-                "style" in out.lower() or "snake_case" in out.lower() or
-                "camelCase" in out.lower() or "function" in out.lower() or
-                "class" in out.lower())
+        assert (
+            "convention" in out.lower()
+            or "naming" in out.lower()
+            or "style" in out.lower()
+            or "snake_case" in out.lower()
+            or "camelCase" in out.lower()
+            or "function" in out.lower()
+            or "class" in out.lower()
+        )
 
     def test_conventions_json_has_rules(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["conventions"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         # Should have some naming analysis data
-        has_data = ("rules" in data or "conventions" in data or
-                    "naming" in data or "functions" in data.get("summary", {}))
+        has_data = (
+            "rules" in data or "conventions" in data or "naming" in data or "functions" in data.get("summary", {})
+        )
         assert has_data or data.get("summary", {}), f"Conventions JSON seems empty: {list(data.keys())}"
 
     def test_conventions_json_has_naming_section(self, cli_runner, indexed_project, monkeypatch):
@@ -272,6 +294,7 @@ class TestConventions:
 # breaking command
 # ============================================================================
 
+
 class TestBreaking:
     """Tests for `roam breaking` -- detect breaking API changes."""
 
@@ -293,9 +316,14 @@ class TestBreaking:
         result = invoke_cli(cli_runner, ["breaking"], cwd=indexed_project)
         if result.exit_code == 0:
             out = result.output
-            assert ("breaking" in out.lower() or "no breaking" in out.lower() or
-                    "change" in out.lower() or "api" in out.lower() or
-                    "public" in out.lower() or "no changed" in out.lower())
+            assert (
+                "breaking" in out.lower()
+                or "no breaking" in out.lower()
+                or "change" in out.lower()
+                or "api" in out.lower()
+                or "public" in out.lower()
+                or "no changed" in out.lower()
+            )
 
     def test_breaking_json_has_summary(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
@@ -338,5 +366,4 @@ class TestBreaking:
         if result.exit_code == 0:
             out = result.output
             # With no changes, should mention "no changed" or "no breaking"
-            assert ("no changed" in out.lower() or "no breaking" in out.lower() or
-                    "0" in out or len(out.strip()) > 0)
+            assert "no changed" in out.lower() or "no breaking" in out.lower() or "0" in out or len(out.strip()) > 0

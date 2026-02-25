@@ -6,36 +6,30 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
 
-RUNTIME_STATS_SQL = """\
-CREATE TABLE IF NOT EXISTS runtime_stats (
-    id INTEGER PRIMARY KEY,
-    symbol_id INTEGER REFERENCES symbols(id),
-    symbol_name TEXT,
-    file_path TEXT,
-    trace_source TEXT,
-    call_count INTEGER DEFAULT 0,
-    p50_latency_ms REAL,
-    p99_latency_ms REAL,
-    error_rate REAL DEFAULT 0.0,
-    last_seen TEXT,
-    ingested_at TEXT DEFAULT (datetime('now'))
-);
-"""
+# The runtime_stats table is defined in roam.db.schema (SCHEMA_SQL) and is
+# created by ensure_schema() during open_db().  The helper below is kept for
+# callers that operate on standalone connections (e.g. tests, external tools).
 
 
 def ensure_runtime_table(conn: sqlite3.Connection) -> None:
-    """Create the runtime_stats table if it does not exist."""
-    conn.executescript(RUNTIME_STATS_SQL)
+    """Ensure the runtime_stats table exists.
+
+    Delegates to the canonical schema in roam.db.schema so there is a single
+    source of truth for the table definition.
+    """
+    from roam.db.schema import SCHEMA_SQL
+
+    conn.executescript(SCHEMA_SQL)
 
 
 # ---------------------------------------------------------------------------
 # Symbol matching
 # ---------------------------------------------------------------------------
+
 
 def match_trace_to_symbol(
     conn: sqlite3.Connection,
@@ -54,9 +48,7 @@ def match_trace_to_symbol(
         # Normalize path separators for comparison
         norm = file_path.replace("\\", "/")
         rows = conn.execute(
-            "SELECT s.id FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.name = ? AND f.path LIKE ?",
+            "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.name = ? AND f.path LIKE ?",
             (function_name, f"%{norm}"),
         ).fetchall()
         if len(rows) == 1:
@@ -64,9 +56,7 @@ def match_trace_to_symbol(
         # Also try with the raw path
         if not rows:
             rows = conn.execute(
-                "SELECT s.id FROM symbols s "
-                "JOIN files f ON s.file_id = f.id "
-                "WHERE s.name = ? AND f.path LIKE ?",
+                "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.name = ? AND f.path LIKE ?",
                 (function_name, f"%{file_path}"),
             ).fetchall()
             if len(rows) == 1:
@@ -95,6 +85,7 @@ def match_trace_to_symbol(
 # Upsert helper
 # ---------------------------------------------------------------------------
 
+
 def _upsert_runtime_stat(
     conn: sqlite3.Connection,
     symbol_id: int | None,
@@ -106,6 +97,9 @@ def _upsert_runtime_stat(
     p99_latency_ms: float | None,
     error_rate: float,
     last_seen: str | None,
+    otel_db_system: str | None = None,
+    otel_db_operation: str | None = None,
+    otel_db_statement_type: str | None = None,
 ) -> dict:
     """Insert or update a runtime_stats row. Returns a summary dict."""
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -123,19 +117,46 @@ def _upsert_runtime_stat(
             "UPDATE runtime_stats SET "
             "symbol_id = ?, file_path = ?, call_count = ?, "
             "p50_latency_ms = ?, p99_latency_ms = ?, error_rate = ?, "
-            "last_seen = ?, ingested_at = ? "
+            "last_seen = ?, otel_db_system = ?, otel_db_operation = ?, "
+            "otel_db_statement_type = ?, ingested_at = ? "
             "WHERE id = ?",
-            (symbol_id, file_path, call_count, p50_latency_ms,
-             p99_latency_ms, error_rate, last_seen, now, existing[0]),
+            (
+                symbol_id,
+                file_path,
+                call_count,
+                p50_latency_ms,
+                p99_latency_ms,
+                error_rate,
+                last_seen,
+                otel_db_system,
+                otel_db_operation,
+                otel_db_statement_type,
+                now,
+                existing[0],
+            ),
         )
     else:
         conn.execute(
             "INSERT INTO runtime_stats "
             "(symbol_id, symbol_name, file_path, trace_source, call_count, "
-            "p50_latency_ms, p99_latency_ms, error_rate, last_seen, ingested_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (symbol_id, symbol_name, file_path, trace_source, call_count,
-             p50_latency_ms, p99_latency_ms, error_rate, last_seen, now),
+            "p50_latency_ms, p99_latency_ms, error_rate, last_seen, "
+            "otel_db_system, otel_db_operation, otel_db_statement_type, ingested_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                symbol_id,
+                symbol_name,
+                file_path,
+                trace_source,
+                call_count,
+                p50_latency_ms,
+                p99_latency_ms,
+                error_rate,
+                last_seen,
+                otel_db_system,
+                otel_db_operation,
+                otel_db_statement_type,
+                now,
+            ),
         )
 
     return {
@@ -146,6 +167,9 @@ def _upsert_runtime_stat(
         "p50_latency_ms": p50_latency_ms,
         "p99_latency_ms": p99_latency_ms,
         "error_rate": error_rate,
+        "otel_db_system": otel_db_system,
+        "otel_db_operation": otel_db_operation,
+        "otel_db_statement_type": otel_db_statement_type,
         "matched": symbol_id is not None,
     }
 
@@ -153,6 +177,7 @@ def _upsert_runtime_stat(
 # ---------------------------------------------------------------------------
 # Latency helpers
 # ---------------------------------------------------------------------------
+
 
 def _percentile(values: list[float], pct: float) -> float:
     """Compute a percentile from a sorted list of values."""
@@ -169,9 +194,52 @@ def _percentile(values: list[float], pct: float) -> float:
     return values[lo] + (values[hi] - values[lo]) * frac
 
 
+def _attr_value(attr: dict) -> str | None:
+    """Extract a scalar string value from an OTel attribute object."""
+    value = attr.get("value")
+    if not isinstance(value, dict):
+        return str(value) if value is not None else None
+
+    for key in (
+        "stringValue",
+        "string_value",
+        "intValue",
+        "int_value",
+        "doubleValue",
+        "double_value",
+        "boolValue",
+        "bool_value",
+    ):
+        if key in value and value[key] is not None:
+            return str(value[key])
+    return None
+
+
+def _statement_type(statement: str) -> str | None:
+    """Infer SQL operation type (SELECT/INSERT/UPDATE/...) from SQL text."""
+    if not statement:
+        return None
+    token = statement.strip().split(" ", 1)[0].upper()
+    allowed = {
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "MERGE",
+        "UPSERT",
+        "REPLACE",
+        "CREATE",
+        "DROP",
+        "ALTER",
+        "TRUNCATE",
+    }
+    return token if token in allowed else None
+
+
 # ---------------------------------------------------------------------------
 # Ingesters
 # ---------------------------------------------------------------------------
+
 
 def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
     """Parse a simple generic JSON trace format.
@@ -205,8 +273,16 @@ def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict
 
         symbol_id = match_trace_to_symbol(conn, fn_name, file_path)
         result = _upsert_runtime_stat(
-            conn, symbol_id, fn_name, file_path, "generic",
-            call_count, p50, p99, err, None,
+            conn,
+            symbol_id,
+            fn_name,
+            file_path,
+            "generic",
+            call_count,
+            p50,
+            p99,
+            err,
+            None,
         )
         results.append(result)
 
@@ -242,6 +318,9 @@ def ingest_otel_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
         # Compute latency stats from durations
         durations_ms = []
         error_count = 0
+        db_systems: set[str] = set()
+        db_operations: set[str] = set()
+        db_stmt_types: set[str] = set()
         for span in spans:
             start = int(span.get("startTimeUnixNano", 0))
             end = int(span.get("endTimeUnixNano", 0))
@@ -250,6 +329,20 @@ def ingest_otel_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
             status = span.get("status", {})
             if status.get("code") == 2 or status.get("code") == "STATUS_CODE_ERROR":
                 error_count += 1
+            attrs = span.get("attributes", [])
+            for attr in attrs:
+                key = attr.get("key", "")
+                val = _attr_value(attr)
+                if not val:
+                    continue
+                if key == "db.system":
+                    db_systems.add(val.lower())
+                elif key in {"db.operation", "db.sql.operation", "db.mongodb.operation"}:
+                    db_operations.add(val.upper())
+                elif key in {"db.statement", "db.query.text", "db.sql.text"}:
+                    st = _statement_type(val)
+                    if st:
+                        db_stmt_types.add(st)
 
         call_count = len(spans)
         p50 = _percentile(durations_ms, 50) if durations_ms else None
@@ -269,10 +362,25 @@ def ingest_otel_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
             if file_path:
                 break
 
+        db_system = sorted(db_systems)[0] if db_systems else None
+        db_statement_type = sorted(db_stmt_types)[0] if db_stmt_types else None
+        db_operation = sorted(db_operations)[0] if db_operations else db_statement_type
+
         symbol_id = match_trace_to_symbol(conn, span_name, file_path)
         result = _upsert_runtime_stat(
-            conn, symbol_id, span_name, file_path, "otel",
-            call_count, p50, p99, err_rate, None,
+            conn,
+            symbol_id,
+            span_name,
+            file_path,
+            "otel",
+            call_count,
+            p50,
+            p99,
+            err_rate,
+            None,
+            otel_db_system=db_system,
+            otel_db_operation=db_operation,
+            otel_db_statement_type=db_statement_type,
         )
         results.append(result)
 
@@ -323,8 +431,16 @@ def ingest_jaeger_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]
         file_path = None
         symbol_id = match_trace_to_symbol(conn, span_name, file_path)
         result = _upsert_runtime_stat(
-            conn, symbol_id, span_name, file_path, "jaeger",
-            call_count, p50, p99, err_rate, None,
+            conn,
+            symbol_id,
+            span_name,
+            file_path,
+            "jaeger",
+            call_count,
+            p50,
+            p99,
+            err_rate,
+            None,
         )
         results.append(result)
 
@@ -370,8 +486,16 @@ def ingest_zipkin_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]
         file_path = None
         symbol_id = match_trace_to_symbol(conn, span_name, file_path)
         result = _upsert_runtime_stat(
-            conn, symbol_id, span_name, file_path, "zipkin",
-            call_count, p50, p99, err_rate, None,
+            conn,
+            symbol_id,
+            span_name,
+            file_path,
+            "zipkin",
+            call_count,
+            p50,
+            p99,
+            err_rate,
+            None,
         )
         results.append(result)
 

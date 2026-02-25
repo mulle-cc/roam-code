@@ -1,18 +1,24 @@
 """Find unprotected entry points — symbols with no path to a required gate."""
+
 from __future__ import annotations
 
 import fnmatch
 import os
 import re
+
 import click
 
-from roam.db.connection import open_db, batched_in
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.gate_presets import (
-    ALL_PRESETS, get_preset, detect_preset, load_gates_config,
+    ALL_PRESETS,
+    detect_preset,
+    get_preset,
+    load_gates_config,
 )
 from roam.commands.graph_helpers import build_forward_adj
+from roam.commands.resolve import ensure_index
+from roam.coverage_reports import ingest_coverage_reports
+from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 
 def _find_gates(conn, gate_names, gate_pattern):
@@ -36,8 +42,7 @@ def _find_gates(conn, gate_names, gate_pattern):
     if gate_pattern:
         regex = re.compile(gate_pattern, re.IGNORECASE)
         rows = conn.execute(
-            "SELECT s.id, s.name, f.path as file_path, s.line_start "
-            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "SELECT s.id, s.name, f.path as file_path, s.line_start FROM symbols s JOIN files f ON s.file_id = f.id "
         ).fetchall()
         for r in rows:
             if regex.search(r["name"]):
@@ -158,38 +163,82 @@ def _evaluate_gate_rules(conn, rules):
                     related_test_count += test_fn_count.get(tf, 0)
 
             if not has_test or related_test_count < rule.min_test_count:
-                violations.append({
-                    "rule": rule.name,
-                    "severity": rule.severity,
-                    "file": fp,
-                    "description": rule.description,
-                    "test_found": has_test,
-                    "test_count": related_test_count,
-                    "min_required": rule.min_test_count,
-                })
+                violations.append(
+                    {
+                        "rule": rule.name,
+                        "severity": rule.severity,
+                        "file": fp,
+                        "description": rule.description,
+                        "test_found": has_test,
+                        "test_count": related_test_count,
+                        "min_required": rule.min_test_count,
+                    }
+                )
 
     return violations
 
 
 @click.command("coverage-gaps")
-@click.option("--gate", "gate_names", default=None,
-              help="Comma-separated gate symbol names (e.g. 'requireAuth,validateToken')")
-@click.option("--gate-pattern", "gate_pattern", default=None,
-              help="Regex to match gate symbols by name (e.g. 'auth|permission|guard')")
-@click.option("--scope", default=None,
-              help="File scope glob (e.g. 'app/routes/**')")
-@click.option("--entry-pattern", "entry_pattern", default=None,
-              help="Regex to filter entry points by name (e.g. 'handler|controller')")
+@click.option(
+    "--gate",
+    "gate_names",
+    default=None,
+    help="Comma-separated gate symbol names (e.g. 'requireAuth,validateToken')",
+)
+@click.option(
+    "--gate-pattern",
+    "gate_pattern",
+    default=None,
+    help="Regex to match gate symbols by name (e.g. 'auth|permission|guard')",
+)
+@click.option("--scope", default=None, help="File scope glob (e.g. 'app/routes/**')")
+@click.option(
+    "--entry-pattern",
+    "entry_pattern",
+    default=None,
+    help="Regex to filter entry points by name (e.g. 'handler|controller')",
+)
 @click.option("--max-depth", default=8, show_default=True, help="Max BFS depth")
-@click.option("--preset", "preset_name", default=None,
-              help="Use a built-in gate preset (python, javascript, go, java-maven, rust)")
-@click.option("--auto-detect", "auto_detect", is_flag=True, default=False,
-              help="Auto-detect framework preset from project files")
-@click.option("--config", "config_path", default=None,
-              help="Path to .roam-gates.yml config file")
+@click.option(
+    "--preset",
+    "preset_name",
+    default=None,
+    help="Use a built-in gate preset (python, javascript, go, java-maven, rust)",
+)
+@click.option(
+    "--auto-detect",
+    "auto_detect",
+    is_flag=True,
+    default=False,
+    help="Auto-detect framework preset from project files",
+)
+@click.option("--config", "config_path", default=None, help="Path to .roam-gates.yml config file")
+@click.option(
+    "--import-report",
+    "import_reports",
+    multiple=True,
+    help="Import coverage report (.info/.xml/.json). Repeat for multiple reports.",
+)
+@click.option(
+    "--merge-imported",
+    is_flag=True,
+    default=False,
+    help="Merge imported coverage into existing data (default replaces old imports).",
+)
 @click.pass_context
-def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth,
-                  preset_name, auto_detect, config_path):
+def coverage_gaps(
+    ctx,
+    gate_names,
+    gate_pattern,
+    scope,
+    entry_pattern,
+    max_depth,
+    preset_name,
+    auto_detect,
+    config_path,
+    import_reports,
+    merge_imported,
+):
     """Find entry points with no path to a required gate symbol.
 
     Use --gate for exact names or --gate-pattern for regex matching.
@@ -199,8 +248,33 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
     Use --preset or --auto-detect to apply framework-specific gate rules
     that check file-level test coverage requirements.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
+
+    import_summary = None
+    if import_reports:
+        try:
+            with open_db(readonly=False) as conn:
+                import_summary = ingest_coverage_reports(
+                    conn,
+                    list(import_reports),
+                    replace_existing=not merge_imported,
+                    project_root=find_project_root(),
+                )
+        except Exception as exc:
+            msg = f"Coverage import failed: {exc}"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "coverage-gaps",
+                            summary={"error": msg},
+                        )
+                    )
+                )
+            else:
+                click.echo(msg)
+            raise SystemExit(1)
 
     # --- Resolve preset / config gate rules ---
     preset_used = None
@@ -211,9 +285,14 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
         if not gate_rules:
             msg = f"No rules loaded from {config_path}"
             if json_mode:
-                click.echo(to_json(json_envelope("coverage-gaps",
-                    summary={"error": msg},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "coverage-gaps",
+                            summary={"error": msg},
+                        )
+                    )
+                )
             else:
                 click.echo(msg)
             return
@@ -224,9 +303,14 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
             available = ", ".join(p.name for p in ALL_PRESETS)
             msg = f"Unknown preset '{preset_name}'. Available: {available}"
             if json_mode:
-                click.echo(to_json(json_envelope("coverage-gaps",
-                    summary={"error": msg},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "coverage-gaps",
+                            summary={"error": msg},
+                        )
+                    )
+                )
             else:
                 click.echo(msg)
             return
@@ -245,6 +329,42 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
         with open_db(readonly=True) as conn:
             gate_violations = _evaluate_gate_rules(conn, gate_rules)
 
+    # Import-only mode: no gate traversal requested.
+    if import_summary and not gate_names and not gate_pattern and not gate_rules:
+        coverage_pct = import_summary.get("coverage_pct")
+        coverage_str = f"{coverage_pct}%" if coverage_pct is not None else "n/a"
+        verdict = (
+            f"Imported {import_summary['reports']} report(s): "
+            f"{import_summary['matched_files']}/{import_summary['parsed_files']} files matched; "
+            f"coverage={coverage_str}"
+        )
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "coverage-gaps",
+                        summary={
+                            "verdict": verdict,
+                            "imported_reports": import_summary["reports"],
+                            "matched_files": import_summary["matched_files"],
+                            "parsed_files": import_summary["parsed_files"],
+                            "unmatched_files": import_summary["unmatched_count"],
+                            "coverage_pct": import_summary["coverage_pct"],
+                        },
+                        import_summary=import_summary,
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(
+                f"  Updated: {import_summary['file_rows_updated']} files, "
+                f"{import_summary['symbol_rows_updated']} symbols"
+            )
+            if import_summary["unmatched_count"]:
+                click.echo(f"  Unmatched files: {import_summary['unmatched_count']}")
+        return
+
     # If only preset/config mode (no --gate/--gate-pattern), output just the violations
     if not gate_names and not gate_pattern and gate_rules:
         errors = [v for v in gate_violations if v["severity"] == "error"]
@@ -252,36 +372,55 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
         preset_info = preset_used.name if preset_used else "custom"
 
         if json_mode:
-            click.echo(to_json(json_envelope("coverage-gaps",
-                summary={
-                    "verdict": "fail" if errors else "pass",
-                    "preset": preset_info,
-                    "total_violations": len(gate_violations),
-                    "errors": len(errors),
-                    "warnings": len(warnings),
-                },
-                preset=preset_info,
-                gate_violations=gate_violations,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "coverage-gaps",
+                        summary={
+                            "verdict": "fail" if errors else "pass",
+                            "preset": preset_info,
+                            "total_violations": len(gate_violations),
+                            "errors": len(errors),
+                            "warnings": len(warnings),
+                            "imported_coverage_pct": import_summary["coverage_pct"] if import_summary else None,
+                        },
+                        preset=preset_info,
+                        gate_violations=gate_violations,
+                        import_summary=import_summary,
+                    )
+                )
+            )
         else:
             click.echo(f"=== Coverage Gaps (preset: {preset_info}) ===\n")
-            click.echo(f"Violations: {len(gate_violations)}  "
-                        f"Errors: {len(errors)}  Warnings: {len(warnings)}")
+            if import_summary:
+                pct = import_summary.get("coverage_pct")
+                pct_str = f"{pct}%" if pct is not None else "n/a"
+                click.echo(
+                    f"Imported coverage: {import_summary['matched_files']}/"
+                    f"{import_summary['parsed_files']} files, {pct_str}"
+                )
+                click.echo()
+            click.echo(f"Violations: {len(gate_violations)}  Errors: {len(errors)}  Warnings: {len(warnings)}")
             click.echo()
             if gate_violations:
                 rows = []
                 for v in gate_violations[:40]:
-                    rows.append([
-                        v["severity"].upper(), v["rule"],
-                        v["file"],
-                        f"{v['test_count']}/{v['min_required']}",
-                        v["description"],
-                    ])
-                click.echo(format_table(
-                    ["Severity", "Rule", "File", "Tests", "Description"],
-                    rows,
-                    budget=40,
-                ))
+                    rows.append(
+                        [
+                            v["severity"].upper(),
+                            v["rule"],
+                            v["file"],
+                            f"{v['test_count']}/{v['min_required']}",
+                            v["description"],
+                        ]
+                    )
+                click.echo(
+                    format_table(
+                        ["Severity", "Rule", "File", "Tests", "Description"],
+                        rows,
+                        budget=40,
+                    )
+                )
             else:
                 click.echo("All gate rules pass.")
         return
@@ -295,9 +434,14 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
 
         if not gates:
             if json_mode:
-                click.echo(to_json(json_envelope("coverage-gaps",
-                    summary={"error": "No gate symbols found"},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "coverage-gaps",
+                            summary={"error": "No gate symbols found"},
+                        )
+                    )
+                )
             else:
                 click.echo("No gate symbols found matching the criteria.")
             return
@@ -305,9 +449,14 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
         entries = _find_entries(conn, scope, entry_pattern)
         if not entries:
             if json_mode:
-                click.echo(to_json(json_envelope("coverage-gaps",
-                    summary={"error": "No entry points found"},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "coverage-gaps",
+                            summary={"error": "No entry points found"},
+                        )
+                    )
+                )
             else:
                 click.echo("No entry points found in scope.")
             return
@@ -344,23 +493,27 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
                         id_to_name[sid] = r["name"] if r else "?"
                     chain_names.append(id_to_name[sid])
 
-                covered.append({
-                    "name": entry["name"],
-                    "kind": entry["kind"],
-                    "file": entry["file_path"],
-                    "line": entry["line_start"],
-                    "gate": gate_info.get(gate_id, "?"),
-                    "depth": depth,
-                    "chain": chain_names,
-                })
+                covered.append(
+                    {
+                        "name": entry["name"],
+                        "kind": entry["kind"],
+                        "file": entry["file_path"],
+                        "line": entry["line_start"],
+                        "gate": gate_info.get(gate_id, "?"),
+                        "depth": depth,
+                        "chain": chain_names,
+                    }
+                )
             else:
-                uncovered.append({
-                    "name": entry["name"],
-                    "kind": entry["kind"],
-                    "file": entry["file_path"],
-                    "line": entry["line_start"],
-                    "reason": f"no gate in call chain (searched {max_depth} hops)",
-                })
+                uncovered.append(
+                    {
+                        "name": entry["name"],
+                        "kind": entry["kind"],
+                        "file": entry["file_path"],
+                        "line": entry["line_start"],
+                        "reason": f"no gate in call chain (searched {max_depth} hops)",
+                    }
+                )
 
         total = len(entries)
         coverage_pct = round(len(covered) * 100 / total, 1) if total else 0
@@ -372,6 +525,7 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
                 "uncovered": len(uncovered),
                 "coverage_pct": coverage_pct,
                 "gates_found": sorted(set(gate_info.values())),
+                "imported_coverage_pct": import_summary["coverage_pct"] if import_summary else None,
             }
             extra = dict(
                 gates_found=sorted(set(gate_info.values())),
@@ -384,10 +538,17 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
             if gate_violations:
                 summary["gate_violation_count"] = len(gate_violations)
                 extra["gate_violations"] = gate_violations
-            click.echo(to_json(json_envelope("coverage-gaps",
-                summary=summary,
-                **extra,
-            )))
+            if import_summary:
+                extra["import_summary"] = import_summary
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "coverage-gaps",
+                        summary=summary,
+                        **extra,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -395,25 +556,39 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
         if preset_used:
             header = f"=== Coverage Gaps (preset: {preset_used.name}) ==="
         click.echo(f"{header}\n")
+        if import_summary:
+            pct = import_summary.get("coverage_pct")
+            pct_str = f"{pct}%" if pct is not None else "n/a"
+            click.echo(
+                f"Imported coverage: {import_summary['matched_files']}/"
+                f"{import_summary['parsed_files']} files, {pct_str}"
+            )
+            click.echo()
         click.echo(f"Gates: {', '.join(sorted(set(gate_info.values())))}")
-        click.echo(f"Entry points: {total}  Covered: {len(covered)}  "
-                    f"Uncovered: {len(uncovered)}  Coverage: {coverage_pct}%")
+        click.echo(
+            f"Entry points: {total}  Covered: {len(covered)}  Uncovered: {len(uncovered)}  Coverage: {coverage_pct}%"
+        )
         click.echo()
 
         if uncovered:
             click.echo(f"-- Uncovered ({len(uncovered)}) --")
             rows = []
             for u in uncovered[:30]:
-                rows.append([
-                    u["name"], abbrev_kind(u["kind"]),
-                    loc(u["file"], u["line"]),
-                    u["reason"],
-                ])
-            click.echo(format_table(
-                ["Name", "Kind", "Location", "Reason"],
-                rows,
-                budget=30,
-            ))
+                rows.append(
+                    [
+                        u["name"],
+                        abbrev_kind(u["kind"]),
+                        loc(u["file"], u["line"]),
+                        u["reason"],
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["Name", "Kind", "Location", "Reason"],
+                    rows,
+                    budget=30,
+                )
+            )
             click.echo()
 
         if covered:
@@ -423,30 +598,41 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
                 chain_str = " -> ".join(c["chain"][:5])
                 if len(c["chain"]) > 5:
                     chain_str += f" (+{len(c['chain']) - 5})"
-                rows.append([
-                    c["name"], abbrev_kind(c["kind"]),
-                    loc(c["file"], c["line"]),
-                    c["gate"], str(c["depth"]),
-                    chain_str,
-                ])
-            click.echo(format_table(
-                ["Name", "Kind", "Location", "Gate", "Depth", "Chain"],
-                rows,
-                budget=20,
-            ))
+                rows.append(
+                    [
+                        c["name"],
+                        abbrev_kind(c["kind"]),
+                        loc(c["file"], c["line"]),
+                        c["gate"],
+                        str(c["depth"]),
+                        chain_str,
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["Name", "Kind", "Location", "Gate", "Depth", "Chain"],
+                    rows,
+                    budget=20,
+                )
+            )
 
         if gate_violations:
             click.echo()
             click.echo(f"-- Gate Violations ({len(gate_violations)}) --")
             rows = []
             for v in gate_violations[:30]:
-                rows.append([
-                    v["severity"].upper(), v["rule"],
-                    v["file"],
-                    f"{v['test_count']}/{v['min_required']}",
-                ])
-            click.echo(format_table(
-                ["Severity", "Rule", "File", "Tests"],
-                rows,
-                budget=30,
-            ))
+                rows.append(
+                    [
+                        v["severity"].upper(),
+                        v["rule"],
+                        v["file"],
+                        f"{v['test_count']}/{v['min_required']}",
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["Severity", "Rule", "File", "Tests"],
+                    rows,
+                    budget=30,
+                )
+            )
