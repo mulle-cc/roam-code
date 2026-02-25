@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "roam-code"
+name = "mulle-roam-code"
 version = "10.0.1"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
@@ -43,6 +43,7 @@ Issues = "https://github.com/Cranot/roam-code/issues"
 
 [project.scripts]
 roam = "roam.cli:cli"
+mulle-roam = "roam.cli:cli"
 
 [project.optional-dependencies]
 mcp = [
