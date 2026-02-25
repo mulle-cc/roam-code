@@ -298,7 +298,7 @@ class TestReferences:
 
 class TestHLanguageConfig:
     def test_h_language_config(self, tmp_path):
-        """roam config --h-language objc persists and affects get_language_for_file."""
+        """roam config --c-dialect objc persists and affects get_language_for_file."""
         import subprocess, sys
         from pathlib import Path
         proj = tmp_path / "proj"
@@ -306,15 +306,14 @@ class TestHLanguageConfig:
         subprocess.run(["git", "init"], cwd=proj, capture_output=True)
         roam_bin = str(Path(sys.executable).parent / "roam")
         result = subprocess.run(
-            [roam_bin, "config", "--h-language", "objc"],
+            [roam_bin, "config", "--c-dialect", "objc"],
             cwd=proj, capture_output=True, text=True,
         )
         assert result.returncode == 0
         assert "objc" in result.stdout
-        # Verify config.json was written
         import json
         cfg = json.loads((proj / ".roam" / "config.json").read_text())
-        assert cfg["h-language"] == "objc"
+        assert cfg["c-dialect"] == "objc"
 
     def test_h_language_invalid(self, tmp_path):
         import subprocess, sys
@@ -324,10 +323,10 @@ class TestHLanguageConfig:
         subprocess.run(["git", "init"], cwd=proj, capture_output=True)
         roam_bin = str(Path(sys.executable).parent / "roam")
         result = subprocess.run(
-            [roam_bin, "config", "--h-language", "java"],
+            [roam_bin, "config", "--c-dialect", "java"],
             cwd=proj, capture_output=True, text=True,
         )
-        assert result.returncode != 0  # click Choice rejects invalid values
+        assert result.returncode != 0
 
 
 class TestIntegration:

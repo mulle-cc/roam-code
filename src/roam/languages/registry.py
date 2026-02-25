@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 # Map file extension -> (tree-sitter language name, extractor language key)
 _EXTENSION_MAP: dict[str, str] = {
-    # NOTE: .h is configurable via `roam config h-language <c|cpp|objc>` (default: c)
+    # NOTE: .h .m .mm .aam are dialect-controlled via `roam config --c-dialect`
     ".vue": "vue",
     ".svelte": "svelte",
     ".py": "python",
@@ -40,9 +40,7 @@ _EXTENSION_MAP: dict[str, str] = {
     ".rb": "ruby",
     ".php": "php",
     ".cs": "c_sharp",
-    ".m": "objc",
-    ".mm": "objc",
-    ".aam": "objc",
+    # .h .m .mm .aam are dialect-controlled (see _dialect_language)
     ".kt": "kotlin",
     ".kts": "kotlin",
     ".swift": "swift",
@@ -78,7 +76,7 @@ _EXTENSION_MAP: dict[str, str] = {
 _DEDICATED_EXTRACTORS = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp", "php",
-    "c_sharp", "ruby", "objc",
+    "c_sharp", "ruby", "objc", "mulle-objc",
 })
 
 # All supported tree-sitter language names (includes aliased languages)
@@ -87,6 +85,7 @@ _SUPPORTED_LANGUAGES = frozenset({
     "go", "rust", "java", "c", "cpp",
     "ruby", "php", "c_sharp", "kotlin", "swift", "scala",
     "objc",
+    "mulle-objc",
     "vue", "svelte",
     # Aliased languages (parsed via grammar aliases)
     "apex", "sfxml", "aura", "visualforce",
@@ -111,23 +110,38 @@ def get_language_for_file(path: str) -> str | None:
         return "sfxml"
     _, ext = os.path.splitext(path)
     ext = ext.lower()
-    if ext == ".h":
-        return _get_h_language()
+    if ext in (".h", ".m", ".mm", ".aam"):
+        return _dialect_language(ext)
     return _EXTENSION_MAP.get(ext)
 
 
-def _get_h_language() -> str:
-    """Return the configured language for .h files (default: 'c')."""
+def _get_dialect() -> str:
+    """Return the configured c-dialect (default: 'c'). Falls back to legacy h-language."""
     try:
         from roam.db.connection import find_project_root, _load_project_config
         root = find_project_root()
         cfg = _load_project_config(root)
-        lang = cfg.get("h-language", "c")
-        if lang in ("c", "cpp", "objc"):
-            return lang
+        dialect = cfg.get("c-dialect") or cfg.get("h-language", "c")
+        if dialect in ("c", "cpp", "objc", "objc++", "mulle-objc"):
+            return dialect
     except Exception:
         pass
     return "c"
+
+
+def _dialect_language(ext: str) -> str | None:
+    """Map a C-family extension to a language name based on the configured dialect."""
+    dialect = _get_dialect()
+    # .m/.mm/.aam always parse as objc family; dialect selects which grammar
+    # .h is ambiguous — dialect decides
+    # .aam only makes sense with mulle-objc dialect, otherwise skip
+    if ext == ".h":
+        return {"c": "c", "cpp": "cpp", "objc": "objc", "objc++": "objc", "mulle-objc": "mulle-objc"}.get(dialect, "c")
+    if ext in (".m", ".mm"):
+        return "mulle-objc" if dialect == "mulle-objc" else "objc"
+    if ext == ".aam":
+        return "mulle-objc" if dialect == "mulle-objc" else "objc"
+    return None
 
 
 def get_ts_language(language: str):
@@ -193,7 +207,7 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "ruby":
         from .ruby_lang import RubyExtractor
         return RubyExtractor()
-    elif language == "objc":
+    elif language in ("objc", "mulle-objc"):
         from .objc_lang import ObjCExtractor
         return ObjCExtractor()
     # Salesforce extractors

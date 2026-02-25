@@ -20,12 +20,11 @@ from roam.output.formatter import to_json, json_envelope
               help="Add a glob pattern to the exclude list in .roam/config.json.")
 @click.option("--remove-exclude", "remove_pattern", default=None,
               help="Remove a glob pattern from the exclude list in .roam/config.json.")
-@click.option("--h-language", "h_language", default=None,
-              type=click.Choice(["c", "cpp", "objc"]),
-              help="Language to use for .h header files (default: c).")
+@click.option("--c-dialect", "c_dialect", default=None,
+              help="C dialect for .h/.m/.mm/.aam files. Available: c, cpp, objc, objc++, mulle-objc (if installed).")
 @click.option("--show", is_flag=True, help="Print current configuration.")
 @click.pass_context
-def config(ctx, db_dir, exclude_pattern, remove_pattern, h_language, show):
+def config(ctx, db_dir, exclude_pattern, remove_pattern, c_dialect, show):
     """Manage per-project roam configuration (.roam/config.json).
 
     Use ``--set-db-dir`` to redirect the SQLite database to a local directory
@@ -67,17 +66,20 @@ def config(ctx, db_dir, exclude_pattern, remove_pattern, h_language, show):
         click.echo(f"DB will be stored at: {get_db_path(root)}")
         return
 
-    if h_language is not None:
-        config_path = write_project_config({"h-language": h_language}, root)
+    if c_dialect is not None:
+        _VALID = {"c", "cpp", "objc", "objc++", "mulle-objc"}
+        if c_dialect not in _VALID:
+            raise click.UsageError(f"Unknown dialect {c_dialect!r}. Choose from: {', '.join(sorted(_VALID))}")
+        config_path = write_project_config({"c-dialect": c_dialect}, root)
         if json_mode:
             click.echo(to_json(json_envelope("config",
-                summary={"verdict": "saved", "h-language": h_language},
+                summary={"verdict": "saved", "c-dialect": c_dialect},
                 config_path=str(config_path),
             )))
             return
-        click.echo(f"Saved h-language = {h_language!r}")
+        click.echo(f"Saved c-dialect = {c_dialect!r}")
         click.echo(f"Config written to {config_path}")
-        click.echo("Note: re-run `roam index --force` to re-index with the new .h language.")
+        click.echo("Note: re-run `roam index --force` to re-index with the new dialect.")
         return
 
     if exclude_pattern is not None:

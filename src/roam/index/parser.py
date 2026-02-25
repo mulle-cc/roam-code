@@ -14,16 +14,18 @@ from tree_sitter_language_pack import get_parser as _lp_get_parser
 
 
 def get_parser(grammar: str):
-    """Get a tree-sitter parser, preferring mulle-objc for objc."""
-    if grammar == "objc":
+    """Get a tree-sitter parser, preferring mulle-objc for objc/mulle-objc."""
+    if grammar in ("objc", "mulle-objc"):
         try:
             import tree_sitter_objc as _ts_mulle_objc
             from tree_sitter import Language, Parser
             lang = Language(_ts_mulle_objc.language())
-            p = Parser(lang)
-            return p
+            return Parser(lang)
         except Exception:
             pass
+    if grammar == "mulle-objc":
+        # mulle-objc not installed, fall back to objc from language-pack
+        grammar = "objc"
     return _lp_get_parser(grammar)
 
 # Map file extensions to tree-sitter language names
