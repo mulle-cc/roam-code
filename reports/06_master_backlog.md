@@ -1,15 +1,15 @@
 # roam-code Master Backlog v8.0
 
-> Updated: 24 February 2026 (Session 34 — demo GIF shipped + OSS benchmark harness)
-> Current: 136 canonical CLI commands (+1 alias = 137 invokable), 101 MCP tools, 10 resources, 5 prompts, 23 core tools
-> Tests: 4889 passing | Competitive score: 84/100 (was 79; +5 from scoring data + dataflow baseline)
-> Backlog: **145 items** — 134 shipped, 5 open, 4 killed, 2 someday/maybe
+> Updated: 25 February 2026 (Session 35 — README audit + CI fixes + issue/PR triage)
+> Current: 137 commands, 101 MCP tools, 10 resources, 5 prompts, 23 core tools
+> Tests: 5080 passing | Competitive score: 84/100 (was 79; +5 from scoring data + dataflow baseline)
+> Backlog: **151 items** — 134 shipped, 11 open, 4 killed, 2 someday/maybe
 > Research: See [Research Insights](#research-insights-february-2026) at end of document
 > Competitors: See [`reports/competitor_tracker.md`](competitor_tracker.md)
 
 ---
 
-## Open Items at a Glance (5 remaining)
+## Open Items at a Glance (11 remaining)
 
 ### v11 Launch (3 items — external actions)
 | # | Item | Effort | Epic |
@@ -23,6 +23,16 @@
 |---|------|--------|------|
 | 36 | Partner outreach | ongoing | 5 |
 | 37 | Benchmarks on major OSS repos (harness shipped, coverage expansion pending) | 2-3d | 5 |
+
+### README Accuracy (6 items — from dual-agent review, Session 35)
+| # | Item | Effort | Epic |
+|---|------|--------|------|
+| 146 | Remove duplicate `roam schema` entry from command table (listed in both Getting Started and Exploration) | 5m | 4 |
+| 147 | Fix project structure: `graph/split.py` and `graph/why.py` don't exist in `graph/`, they are `commands/cmd_split.py` and `commands/cmd_why.py`. Also `rules/` missing `ast_match.py`, `builtin.py`, `dataflow.py`; `analysis/` missing `taint.py`; lang files "17 Tier 1" should be 19 | 15m | 4 |
+| 148 | Update stale "29/29" quality benchmark — from when roam had 29 commands. Either re-run benchmarks or remove the Commands column | 30m | 5 |
+| 149 | Update stale minimap example output — shows 93 commands, 18 languages, 70 tests vs actual counts | 10m | 4 |
+| 150 | Fix stale MCP source code comment in `mcp_server.py` saying "16 tools + meta-tool" — should be "23 core + meta-tool" (24 total) | 5m | 4 |
+| 151 | Clean up Roadmap "Next" section — remove internal ticket numbers (#24, #29, etc.) or link them properly; remove process-noise item "#112 recurring hygiene" | 10m | 4 |
 
 ---
 
