@@ -45,3 +45,4 @@ env/
 .kiro/
 AGENTS.md
 MATCHPLAN.md
+package-lock.json
