@@ -1,0 +1,275 @@
+# Periodically syncs the upstream fork (Cranot/roam-code) into this repo.
+#
+# What it does each week:
+#   1. Fetches upstream/main into a local "upstream" branch (force-pushed).
+#   2. Checks out "pending" (creates it from main if it does not exist yet).
+#   3. Merges main into pending first — so any new main commits are included
+#      without losing work that is already on pending.
+#   4. Merges upstream into pending (main is never touched directly).
+#   5. If conflicts exist → asks GitHub Copilot (via the GitHub Models API)
+#      to resolve every conflicted file, then commits onto pending.
+#   6. Pushes pending and opens a PR pending → main for human review.
+#      • No unresolved conflicts → regular (ready-for-review) PR.
+#      • Files that Copilot could not fix → draft PR listing them.
+#
+# Required repo settings:
+#   • "Allow GitHub Actions to create and approve pull requests" must be enabled
+#     (Settings → Actions → General → Workflow permissions).
+#   • The default GITHUB_TOKEN is used; no extra secrets are needed.
+
+name: Sync Upstream Fork
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday at 06:00 UTC
+  workflow_dispatch:        # Also allow a manual trigger from the Actions tab
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Check out the full history so merges work correctly
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # 2. Configure a bot identity for the commits we might create
+      # -----------------------------------------------------------------------
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # -----------------------------------------------------------------------
+      # 3. Fetch upstream and keep the "upstream" branch up-to-date
+      # -----------------------------------------------------------------------
+      - name: Fetch upstream and update upstream branch
+        run: |
+          git remote add upstream https://github.com/Cranot/roam-code.git || true
+          git fetch upstream main
+          # Create or force-update the local "upstream" branch
+          git checkout -B upstream FETCH_HEAD
+          git push origin upstream --force
+          # Return to main — we will branch off it for "pending"
+          git checkout main
+
+      # -----------------------------------------------------------------------
+      # 4. Switch to "pending", merging main into it first (to pick up any
+      #    new main commits without losing existing pending work), then merge
+      #    upstream on top.  Create pending from main if it doesn't exist yet.
+      # -----------------------------------------------------------------------
+      - name: Update pending branch and merge upstream
+        id: merge
+        run: |
+          # Check whether "pending" already exists on origin
+          if git ls-remote --exit-code --heads origin pending; then
+            # Branch exists — check it out and bring in any new main commits
+            git checkout pending
+            git merge main --no-edit --allow-unrelated-histories
+          else
+            # First run — create pending from main
+            git checkout -b pending main
+          fi
+
+          # Now merge upstream on top of pending
+          if git merge upstream/main --no-edit --allow-unrelated-histories; then
+            echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -----------------------------------------------------------------------
+      # 5. If conflicts exist, try to resolve them with GitHub Copilot
+      # -----------------------------------------------------------------------
+      - name: Resolve conflicts with GitHub Copilot
+        if: steps.merge.outputs.has_conflicts == 'true'
+        id: copilot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          import subprocess
+          import sys
+          import urllib.error
+          import urllib.request
+
+          MODELS_ENDPOINT = "https://models.inference.ai.azure.com/chat/completions"
+          MODEL            = "gpt-4o-mini"
+          token            = os.environ["GITHUB_TOKEN"]
+
+          def copilot_resolve(path: str, content: str) -> str | None:
+              """Send the conflicted file to the GitHub Models API and return resolved text."""
+              prompt = (
+                  "You are an expert developer resolving a git merge conflict.\n"
+                  "The file below contains standard git conflict markers "
+                  "(<<<<<<<, =======, >>>>>>>).\n"
+                  "Produce the final, correct merged content.\n"
+                  "Rules:\n"
+                  "  • Remove ALL conflict markers from the output.\n"
+                  "  • Preserve indentation, line endings, and file encoding.\n"
+                  "  • Keep both sides' intent where possible.\n"
+                  "  • Output ONLY the resolved file content — no explanations.\n\n"
+                  f"File: {path}\n\n"
+                  f"{content}"
+              )
+              payload = json.dumps({
+                  "model": MODEL,
+                  "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0,
+              }).encode()
+              req = urllib.request.Request(
+                  MODELS_ENDPOINT,
+                  data=payload,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type":  "application/json",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      result = json.loads(resp.read())
+                  return result["choices"][0]["message"]["content"]
+              except urllib.error.HTTPError as exc:
+                  print(f"  ⚠  Models API error {exc.code}: {exc.read().decode()}", flush=True)
+                  return None
+
+          conflicted = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=U"],
+              text=True,
+          ).splitlines()
+
+          if not conflicted:
+              print("No conflicted files detected.")
+              sys.exit(0)
+
+          still_conflicted = []
+          for path in conflicted:
+              print(f"Resolving: {path}", flush=True)
+              with open(path, encoding="utf-8", errors="replace") as fh:
+                  content = fh.read()
+              resolved = copilot_resolve(path, content)
+              if resolved is None:
+                  print(f"  ✗ Could not resolve {path} (API error) — leaving for manual review.")
+                  still_conflicted.append(path)
+                  continue
+              # Sanity-check: reject if conflict markers survived
+              if any(m in resolved for m in ("<<<<<<<", "=======", ">>>>>>>")):
+                  print(f"  ✗ Copilot output still contains conflict markers — leaving for manual review.")
+                  still_conflicted.append(path)
+                  continue
+              with open(path, "w", encoding="utf-8") as fh:
+                  fh.write(resolved)
+              subprocess.run(["git", "add", path], check=True)
+              print(f"  ✓ Resolved {path}")
+
+          if still_conflicted:
+              # Write the list so the next step can include it in the PR body
+              with open("/tmp/still_conflicted.txt", "w") as fh:
+                  fh.write("\n".join(still_conflicted))
+              # Accept "ours" for unresolvable files so git can finish the commit
+              for path in still_conflicted:
+                  subprocess.run(["git", "checkout", "--ours", path], check=True)
+                  subprocess.run(["git", "add", path], check=True)
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("still_conflicted=true\n")
+          else:
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("still_conflicted=false\n")
+
+          subprocess.run(
+              ["git", "commit", "--no-edit", "-m",
+               "chore: auto-resolve merge conflicts via GitHub Copilot"],
+              check=True,
+          )
+          EOF
+
+      # -----------------------------------------------------------------------
+      # 6. Push the pending branch and open a PR → main for human review
+      #    • Clean / fully-resolved  → regular (ready-for-review) PR
+      #    • Files still conflicted  → draft PR so they are clearly flagged
+      # -----------------------------------------------------------------------
+      - name: Push pending branch
+        run: |
+          git push origin pending --force
+
+      - name: Open PR (clean merge)
+        if: >
+          steps.merge.outputs.has_conflicts == 'false' ||
+          steps.copilot.outputs.still_conflicted == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Close any previous pending PR before opening a fresh one
+          gh pr list --head pending --base main --state open --json number \
+            --jq '.[].number' \
+            | xargs -I{} gh pr close {} --comment "Superseded by new sync run." || true
+
+          gh pr create \
+            --base main \
+            --head pending \
+            --title "chore: sync upstream into pending ($(date +%Y-%m-%d))" \
+            --body "## Upstream sync ready for review
+
+          This PR was opened automatically by the **Sync Upstream Fork** workflow.
+
+          It merges the latest changes from \`Cranot/roam-code\` (tracked in the
+          \`upstream\` branch) into \`pending\`, which is based on \`main\`.
+
+          GitHub Copilot resolved all merge conflicts automatically (or there were none).
+
+          **Please review the diff and merge when you are happy with the changes.**
+
+          _Generated by \`.github/workflows/sync-upstream.yml\`_"
+
+      - name: Open draft PR (conflicts need manual attention)
+        if: >
+          steps.merge.outputs.has_conflicts == 'true' &&
+          steps.copilot.outputs.still_conflicted == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          STILL=""
+          if [ -f /tmp/still_conflicted.txt ]; then
+            STILL=$(sed 's/^/- /' /tmp/still_conflicted.txt)
+          fi
+
+          # Close any previous pending PR before opening a fresh one
+          gh pr list --head pending --base main --state open --json number \
+            --jq '.[].number' \
+            | xargs -I{} gh pr close {} --comment "Superseded by new sync run." || true
+
+          PR_BODY="## Upstream sync — some conflicts need manual review
+
+          This PR was opened automatically by the **Sync Upstream Fork** workflow.
+
+          GitHub Copilot resolved most merge conflicts automatically, but the
+          following files still need human attention:
+
+          ${STILL}
+
+          ### How to finish
+          1. Check out the \`pending\` branch locally.
+          2. Open each file listed above and fix the remaining conflicts.
+          3. Commit and push to \`pending\`.
+          4. Convert this draft PR to \"Ready for review\" and merge.
+
+          _Generated by \`.github/workflows/sync-upstream.yml\`_"
+
+          gh pr create \
+            --draft \
+            --base main \
+            --head pending \
+            --title "chore: sync upstream — manual conflict resolution needed ($(date +%Y-%m-%d))" \
+            --body "$PR_BODY"
