@@ -37,9 +37,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Cranot/roam-code"
-Repository = "https://github.com/Cranot/roam-code"
-Issues = "https://github.com/Cranot/roam-code/issues"
+Homepage = "https://github.com/mulle-cc/roam-code"
+Repository = "https://github.com/mulle-cc/roam-code"
+Issues = "https://github.com/mulle-cc/roam-code/issues"
 
 [project.scripts]
 roam = "roam.cli:cli"
