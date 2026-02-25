@@ -2,11 +2,13 @@
 #
 # What it does each week:
 #   1. Fetches upstream/main into a local "upstream" branch (force-pushed).
-#   2. Creates/resets the "pending" branch from main.
-#   3. Merges upstream into pending (main is never touched directly).
-#   4. If conflicts exist → asks GitHub Copilot (via the GitHub Models API)
+#   2. Checks out "pending" (creates it from main if it does not exist yet).
+#   3. Merges main into pending first — so any new main commits are included
+#      without losing work that is already on pending.
+#   4. Merges upstream into pending (main is never touched directly).
+#   5. If conflicts exist → asks GitHub Copilot (via the GitHub Models API)
 #      to resolve every conflicted file, then commits onto pending.
-#   5. Pushes pending and opens a PR pending → main for human review.
+#   6. Pushes pending and opens a PR pending → main for human review.
 #      • No unresolved conflicts → regular (ready-for-review) PR.
 #      • Files that Copilot could not fix → draft PR listing them.
 #
@@ -62,13 +64,24 @@ jobs:
           git checkout main
 
       # -----------------------------------------------------------------------
-      # 4. Create/reset "pending" from main, then merge upstream into it
+      # 4. Switch to "pending", merging main into it first (to pick up any
+      #    new main commits without losing existing pending work), then merge
+      #    upstream on top.  Create pending from main if it doesn't exist yet.
       # -----------------------------------------------------------------------
-      - name: Merge upstream into pending branch
+      - name: Update pending branch and merge upstream
         id: merge
         run: |
-          # Force-reset "pending" to exactly where main is right now
-          git checkout -B pending main
+          # Check whether "pending" already exists on origin
+          if git ls-remote --exit-code --heads origin pending; then
+            # Branch exists — check it out and bring in any new main commits
+            git checkout pending
+            git merge main --no-edit --allow-unrelated-histories
+          else
+            # First run — create pending from main
+            git checkout -b pending main
+          fi
+
+          # Now merge upstream on top of pending
           if git merge upstream/main --no-edit --allow-unrelated-histories; then
             echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
           else
